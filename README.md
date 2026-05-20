@@ -77,13 +77,16 @@ modules:
 resources:
   - name: site-a
     type: infra.dns
-    config: { provider: namecheap, domain: site-a.com, records: [...] }
+    config:
+      provider: namecheap
+      domain:   site-a.com
+      records: [ { type: A, name: "@", data: 203.0.113.10, ttl: 1800 } ]
   - name: site-b
     type: infra.dns
-    config: { provider: namecheap, domain: site-b.org, records: [...] }
-  - name: site-c
-    type: infra.dns
-    config: { provider: namecheap, domain: site-c.io,  records: [...] }
+    config:
+      provider: namecheap
+      domain:   site-b.org
+      records: [ { type: A, name: "@", data: 203.0.113.20, ttl: 1800 } ]
 ```
 
 This is the intentional shape — keeping one zone per resource
