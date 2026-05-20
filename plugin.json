@@ -26,6 +26,9 @@
       "infra.dns"
     ]
   },
+  "iacProvider": {
+    "computePlanVersion": "v2"
+  },
   "required_secrets": [
     {
       "name": "NAMECHEAP_API_USER",
