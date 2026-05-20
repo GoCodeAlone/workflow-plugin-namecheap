@@ -690,3 +690,46 @@ func TestCreate_MXPrefOutOfRange(t *testing.T) {
 		t.Fatal("expected error for MX priority 999 (out of range)")
 	}
 }
+
+func TestUpdate_DomainRenameRejected(t *testing.T) {
+	d := NewDNSDriverWithClient(&fakeDNSClient{})
+	ref := interfaces.ResourceRef{Name: "old.com", Type: "infra.dns", ProviderID: "old.com"}
+	spec := interfaces.ResourceSpec{
+		Name: "new.com",
+		Type: "infra.dns",
+		Config: map[string]any{
+			"domain":  "new.com",
+			"records": []any{},
+		},
+	}
+	_, err := d.Update(context.Background(), ref, spec)
+	if err == nil {
+		t.Fatal("expected error rejecting domain rename in Update")
+	}
+}
+
+func TestDiff_DomainChange_NeedsReplace(t *testing.T) {
+	d := NewDNSDriverWithClient(&fakeDNSClient{})
+	current := &interfaces.ResourceOutput{
+		ProviderID: "old.com",
+		Outputs:    map[string]any{"domain": "old.com", "record_count": 0},
+	}
+	spec := interfaces.ResourceSpec{
+		Name: "new.com",
+		Type: "infra.dns",
+		Config: map[string]any{
+			"domain":  "new.com",
+			"records": []any{},
+		},
+	}
+	res, err := d.Diff(context.Background(), spec, current)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if !res.NeedsReplace {
+		t.Fatal("expected NeedsReplace=true on domain change")
+	}
+	if len(res.Changes) != 1 || res.Changes[0].Path != "domain" || !res.Changes[0].ForceNew {
+		t.Errorf("expected single ForceNew domain change; got %+v", res.Changes)
+	}
+}

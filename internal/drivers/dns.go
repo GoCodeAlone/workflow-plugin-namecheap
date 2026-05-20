@@ -93,15 +93,24 @@ func (d *DNSDriver) Read(_ context.Context, ref interfaces.ResourceRef) (*interf
 
 // Update replaces the full record set with the desired spec.
 func (d *DNSDriver) Update(ctx context.Context, ref interfaces.ResourceRef, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
-	domain := ref.ProviderID
-	if domain == "" {
-		domain = ref.Name
+	currentDomain := ref.ProviderID
+	if currentDomain == "" {
+		currentDomain = ref.Name
 	}
-	_, records, err := parseDNSSpec(spec)
+	specDomain, records, err := parseDNSSpec(spec)
 	if err != nil {
 		return nil, fmt.Errorf("dns update %q: %w", ref.Name, err)
 	}
-	if err := d.setHosts(domain, records); err != nil {
+	// Reject in-place domain renames. A change of zone is an identity
+	// change, not an update — Diff/Plan should have flagged this as a
+	// replace (NeedsReplace=true) and the engine should have routed
+	// Delete-then-Create. If we silently rewrote `currentDomain` with
+	// `specDomain`'s records, the old zone would be left untouched and
+	// the new one stomped over.
+	if !strings.EqualFold(specDomain, currentDomain) {
+		return nil, fmt.Errorf("dns update %q: spec.domain %q does not match current %q — domain change requires resource replace, not update", ref.Name, specDomain, currentDomain)
+	}
+	if err := d.setHosts(currentDomain, records); err != nil {
 		return nil, fmt.Errorf("dns update %q: %w", ref.Name, err)
 	}
 	return d.Read(ctx, ref)
@@ -128,14 +137,28 @@ func (d *DNSDriver) Delete(_ context.Context, ref interfaces.ResourceRef) error 
 }
 
 // Diff compares desired spec against current output and returns whether
-// an update is needed.
+// an update is needed. A change of the desired domain (spec.domain or
+// spec.Name) away from the current ProviderID is a resource-identity
+// change, not an update — flagged as NeedsReplace so the engine routes
+// Delete-then-Create instead of Update against the wrong zone.
 func (d *DNSDriver) Diff(_ context.Context, desired interfaces.ResourceSpec, current *interfaces.ResourceOutput) (*interfaces.DiffResult, error) {
 	if current == nil {
 		return &interfaces.DiffResult{NeedsUpdate: true}, nil
 	}
-	_, desiredRecords, err := parseDNSSpec(desired)
+	desiredDomain, desiredRecords, err := parseDNSSpec(desired)
 	if err != nil {
 		return nil, fmt.Errorf("dns diff: parse desired: %w", err)
+	}
+	if current.ProviderID != "" && !strings.EqualFold(desiredDomain, current.ProviderID) {
+		return &interfaces.DiffResult{
+			NeedsReplace: true,
+			Changes: []interfaces.FieldChange{{
+				Path:     "domain",
+				Old:      current.ProviderID,
+				New:      desiredDomain,
+				ForceNew: true,
+			}},
+		}, nil
 	}
 	currentRecords := recordsFromOutputs(current.Outputs)
 	changes := diffRecords(currentRecords, desiredRecords)
