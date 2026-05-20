@@ -1,0 +1,4 @@
+{"ts":"2026-05-20T15:32:12Z","tool":"TaskCreate","detail":"task_tool=TaskCreate desc=\"workflow-plugin-namecheap currently has only a Config/Validate skeleton. Implement the full IaC provider gRPC server mod\""}
+{"ts":"2026-05-20T15:32:17Z","tool":"TaskCreate","detail":"task_tool=TaskCreate desc=\"workflow-plugin-hover currently has only a Config/Validate skeleton. Hover has no official SDK; build a session client m\""}
+{"ts":"2026-05-20T15:32:59Z","tool":"Agent","detail":"agent=general-purpose desc=\"Namecheap plugin gRPC driver\" bg=true"}
+{"ts":"2026-05-20T15:33:38Z","tool":"Agent","detail":"agent=general-purpose desc=\"Hover plugin gRPC driver\" bg=true"}
