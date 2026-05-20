@@ -9,9 +9,12 @@ Implements the `infra.dns` resource type using the
 via the [official Go SDK](https://github.com/namecheap/go-namecheap-sdk).
 
 One `infra.dns` resource manages the **full record set** for one domain.
-The Namecheap API uses a whole-zone `setHosts` call; the driver reads
-existing records, diffs, and writes the full desired list in a single
-API call per apply.
+The Namecheap API uses a whole-zone `setHosts` call (no per-record
+endpoints). The driver's `Diff()` method (called by the workflow engine
+ahead of Apply) reads existing records via `GetHosts` and reports
+`NeedsUpdate` when the desired set differs. When Apply runs,
+`Create`/`Update` writes the full desired list in a single `setHosts`
+call, replacing the zone wholesale.
 
 ## Configuration
 
@@ -61,9 +64,11 @@ wfctl secrets setup --plugin workflow-plugin-namecheap
   with rotating egress IPs need a NAT gateway or a static egress proxy.
 - **API quota**: Namecheap rate-limits at 20 req/min per IP. The driver
   batches all record changes into one `setHosts` call per apply.
-- **Replace semantics**: `setHosts` replaces the full zone. The driver
-  reads existing records and diffs before writing to avoid unintended
-  deletions.
+- **Replace semantics**: `setHosts` replaces the full zone. Any record
+  not present in the desired set is dropped on apply. The
+  `infra.dns` resource therefore manages the *entire* zone — do not
+  mix wfctl-managed records with records configured by hand in the
+  Namecheap UI; the next apply will delete the latter.
 - **sandbox mode**: Set `sandbox: true` in the module config to target
   `api.sandbox.namecheap.com` for testing.
 

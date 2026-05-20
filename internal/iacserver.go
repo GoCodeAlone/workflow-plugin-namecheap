@@ -26,7 +26,6 @@ import (
 	"github.com/GoCodeAlone/workflow/interfaces"
 	"github.com/GoCodeAlone/workflow/platform"
 	pb "github.com/GoCodeAlone/workflow/plugin/external/proto"
-	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 	"github.com/namecheap/go-namecheap-sdk/v2/namecheap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -360,10 +359,6 @@ func strVal(m map[string]any, key string) string {
 	return v
 }
 
-func refToPBNC(r interfaces.ResourceRef) *pb.ResourceRef {
-	return &pb.ResourceRef{Name: r.Name, Type: r.Type, ProviderId: r.ProviderID}
-}
-
 func refFromPBNC(r *pb.ResourceRef) interfaces.ResourceRef {
 	if r == nil {
 		return interfaces.ResourceRef{}
@@ -628,6 +623,9 @@ func planToPBNC(p *interfaces.IaCPlan) (*pb.IaCPlan, error) {
 	}, nil
 }
 
+// planFromPBNC is the inverse of planToPBNC. Currently exercised only
+// by the iacserver round-trip test; kept here (rather than _test.go)
+// so it can be shared by future client-side bridge code if needed.
 func planFromPBNC(p *pb.IaCPlan) (*interfaces.IaCPlan, error) {
 	if p == nil {
 		return nil, nil
@@ -674,10 +672,3 @@ func copyStringMapNC(m map[string]string) map[string]string {
 	}
 	return out
 }
-
-// Ensure sdk package is referenced (used by cmd/main.go).
-var _ = sdk.IaCServeOptions{}
-
-// Ensure refToPBNC is referenced to avoid unused variable lint.
-var _ = refToPBNC
-var _ = planFromPBNC

@@ -4,9 +4,13 @@
 // ProviderID is the domain apex (e.g. "example.com").
 //
 // Namecheap's API requires the full record list on every SetHosts call
-// (no per-record create/delete endpoints). The driver therefore reads
-// the current records, applies the desired diff in memory, and writes
-// the resulting full list back as a single SetHosts call.
+// (no per-record create/delete endpoints). The IaC pipeline calls the
+// driver's Diff() method first to compute what (if anything) needs to
+// change; when Diff reports NeedsUpdate, the engine invokes
+// Create/Update which writes the desired record list as a single
+// SetHosts call, replacing the zone wholesale. Diff sees the current
+// records via Read (GetHosts); Create/Update themselves do NOT
+// re-read or merge — they trust the engine's plan.
 package drivers
 
 import (
@@ -57,7 +61,12 @@ func NewDNSDriverWithClient(c DNSClient) *DNSDriver {
 // ---- interfaces.ResourceDriver ----
 
 // Create applies the desired record set to the domain. It is idempotent:
-// if the domain already has an identical record set, no change is made.
+// Create writes the desired record set as a single SetHosts call,
+// replacing the existing zone wholesale. It does not pre-diff or
+// short-circuit on no-change inputs — the engine's Plan→Diff→Apply
+// pipeline ensures Create only fires when work is needed. Callers
+// that invoke Create directly outside that pipeline (rare) will
+// always incur a SetHosts call.
 func (d *DNSDriver) Create(ctx context.Context, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
 	domain, records, err := parseDNSSpec(spec)
 	if err != nil {
@@ -283,10 +292,16 @@ func (d *DNSDriver) setHosts(domain string, records []dnsRecord) error {
 	return err
 }
 
-// dnsOutput converts GetHosts API response into ResourceOutput.
-// Outputs use structpb-safe types: all records are stored as
-// map[string]any with primitive string/int leaves only — no
-// []string or typed slices cross the gRPC boundary.
+// dnsOutput converts a GetHosts API response into ResourceOutput.
+//
+// Outputs are stored as a flat map[string]any with primitive
+// string/int leaves only — no typed slices, no nested non-map
+// values. This shape survives both serialization paths the plugin
+// might encounter: the iacserver's JSON-bytes contract
+// (OutputsJson) AND structpb (used by some host gRPC surfaces).
+// Each record is stored under a numbered key (record_0, record_1,
+// …) rather than a `records: []map{...}` slice because some hosts
+// reject heterogeneous slices through structpb.
 func dnsOutput(name, domain string, resp *namecheap.DomainsDNSGetHostsCommandResponse) *interfaces.ResourceOutput {
 	outputs := map[string]any{
 		"domain":       domain,
