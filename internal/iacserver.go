@@ -176,7 +176,21 @@ func (s *ncIaCServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.St
 			})
 			continue
 		}
-		outputsJSON, _ := json.Marshal(out.Outputs)
+		outputsJSON, marshalErr := json.Marshal(out.Outputs)
+		if marshalErr != nil {
+			// A non-marshalable Outputs value would be a programmer bug
+			// in the driver, not an upstream-API failure. Surface it as
+			// the resource's error status with an empty OutputsJson so
+			// the client sees something concrete rather than a silently
+			// empty payload.
+			statuses = append(statuses, &pb.ResourceStatus{
+				Name:       out.Name,
+				Type:       out.Type,
+				ProviderId: out.ProviderID,
+				Status:     "error",
+			})
+			continue
+		}
 		statuses = append(statuses, &pb.ResourceStatus{
 			Name:        out.Name,
 			Type:        out.Type,

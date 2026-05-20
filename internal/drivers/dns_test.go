@@ -574,11 +574,55 @@ func TestDiffRecords_Delete(t *testing.T) {
 }
 
 func TestDiffRecords_Update(t *testing.T) {
+	// Same (type, name, data); only TTL changes — single update change.
+	current := []dnsRecord{{Type: "A", Name: "@", Data: "1.2.3.4", TTL: 1800}}
+	desired := []dnsRecord{{Type: "A", Name: "@", Data: "1.2.3.4", TTL: 3600}}
+	changes := diffRecords(current, desired)
+	if len(changes) != 1 {
+		t.Fatalf("expected 1 change (TTL update); got %d", len(changes))
+	}
+	if changes[0].Old == nil || changes[0].New == nil {
+		t.Fatalf("expected update (both old + new non-nil); got %+v", changes[0])
+	}
+}
+
+func TestDiffRecords_DataChange_IsAddRemove(t *testing.T) {
+	// Same (type, name) but distinct Data → two separate records.
+	// The diff should treat this as one remove + one add, NOT one
+	// update, so callers can drop the old record and add the new one
+	// without confusing them under a single key.
 	current := []dnsRecord{{Type: "A", Name: "@", Data: "1.2.3.4", TTL: 1800}}
 	desired := []dnsRecord{{Type: "A", Name: "@", Data: "5.6.7.8", TTL: 1800}}
 	changes := diffRecords(current, desired)
-	if len(changes) != 1 {
-		t.Fatalf("expected 1 change (update); got %d", len(changes))
+	if len(changes) != 2 {
+		t.Fatalf("expected 2 changes (one add + one remove); got %d: %+v", len(changes), changes)
+	}
+	var adds, removes int
+	for _, c := range changes {
+		if c.Old == nil && c.New != nil {
+			adds++
+		}
+		if c.Old != nil && c.New == nil {
+			removes++
+		}
+	}
+	if adds != 1 || removes != 1 {
+		t.Fatalf("expected 1 add + 1 remove; got %d adds, %d removes", adds, removes)
+	}
+}
+
+func TestDiffRecords_MultiARecordsSameName_NotCollapsed(t *testing.T) {
+	// Two A records at the same name with distinct Data must each be
+	// represented as their own diff entry — recordKey collapsing on
+	// (type, name) would have hidden one of them.
+	current := []dnsRecord{}
+	desired := []dnsRecord{
+		{Type: "A", Name: "@", Data: "1.1.1.1", TTL: 1800},
+		{Type: "A", Name: "@", Data: "2.2.2.2", TTL: 1800},
+	}
+	changes := diffRecords(current, desired)
+	if len(changes) != 2 {
+		t.Fatalf("expected 2 add-changes (one per A record); got %d: %+v", len(changes), changes)
 	}
 }
 
@@ -599,5 +643,50 @@ func TestDiffRecords_DeterministicOrder(t *testing.T) {
 		if c1[i].Path != c2[i].Path {
 			t.Errorf("index %d: c1.Path=%q c2.Path=%q", i, c1[i].Path, c2[i].Path)
 		}
+	}
+}
+
+// TestRecordsFromOutputs_FloatCount covers the case where outputs come
+// from a JSON unmarshal round-trip — every numeric in the map is float64,
+// not int. recordsFromOutputs must accept both shapes (in-process int
+// produced by dnsOutput, and the gRPC-round-tripped float64) or Diff
+// will report every current record as a delete.
+func TestRecordsFromOutputs_FloatCount(t *testing.T) {
+	outputs := map[string]any{
+		"record_count": float64(1),
+		"record_0": map[string]any{
+			"name":    "@",
+			"type":    "A",
+			"address": "1.2.3.4",
+			"ttl":     float64(1800),
+			"mx_pref": float64(0),
+		},
+	}
+	recs := recordsFromOutputs(outputs)
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record; got %d", len(recs))
+	}
+	if recs[0].Data != "1.2.3.4" || recs[0].TTL != 1800 {
+		t.Errorf("unexpected reconstructed record: %+v", recs[0])
+	}
+}
+
+func TestCreate_MXPrefOutOfRange(t *testing.T) {
+	// MX priority outside [0,255] must surface as a typed error
+	// rather than wrapping silently via uint8().
+	d := NewDNSDriverWithClient(&fakeDNSClient{})
+	spec := interfaces.ResourceSpec{
+		Name: "example.com",
+		Type: "infra.dns",
+		Config: map[string]any{
+			"domain": "example.com",
+			"records": []any{
+				map[string]any{"type": "MX", "name": "@", "data": "mail.example.com", "ttl": 1800, "mx": 999},
+			},
+		},
+	}
+	_, err := d.Create(context.Background(), spec)
+	if err == nil {
+		t.Fatal("expected error for MX priority 999 (out of range)")
 	}
 }

@@ -147,8 +147,8 @@ func (d *DNSDriver) HealthCheck(_ context.Context, ref interfaces.ResourceRef) (
 }
 
 // Scale is a no-op for DNS; DNS does not have a replica count.
-func (d *DNSDriver) Scale(_ context.Context, ref interfaces.ResourceRef, _ int) (*interfaces.ResourceOutput, error) {
-	return d.Read(context.Background(), ref)
+func (d *DNSDriver) Scale(ctx context.Context, ref interfaces.ResourceRef, _ int) (*interfaces.ResourceOutput, error) {
+	return d.Read(ctx, ref)
 }
 
 // Type returns the IaC resource type this driver handles.
@@ -265,7 +265,10 @@ func (d *DNSDriver) setHosts(domain string, records []dnsRecord) error {
 			TTL:        &ttl,
 		}
 		if rec.Type == "MX" {
-			pref := uint8(rec.MX) //nolint:gosec // MX pref is 0-255
+			if rec.MX < 0 || rec.MX > 255 {
+				return fmt.Errorf("namecheap: MX record %q priority %d out of range [0,255]", rec.Name, rec.MX)
+			}
+			pref := uint8(rec.MX) //nolint:gosec // bounds-checked above
 			ncRec.MXPref = &pref
 		}
 		ncRecords = append(ncRecords, ncRec)
@@ -331,8 +334,17 @@ func dnsOutput(name, domain string, resp *namecheap.DomainsDNSGetHostsCommandRes
 
 // recordsFromOutputs reconstructs a []dnsRecord from ResourceOutput.Outputs.
 // Used by Diff to compare current state against desired without a live API call.
+//
+// record_count may arrive as int (in-process, from dnsOutput) or as float64
+// (after a JSON marshal/unmarshal round-trip via gRPC structpb). Accept both.
 func recordsFromOutputs(outputs map[string]any) []dnsRecord {
-	count, _ := outputs["record_count"].(int)
+	var count int
+	switch v := outputs["record_count"].(type) {
+	case int:
+		count = v
+	case float64:
+		count = int(v)
+	}
 	records := make([]dnsRecord, 0, count)
 	for i := 0; i < count; i++ {
 		key := fmt.Sprintf("record_%d", i)
@@ -365,15 +377,23 @@ func recordsFromOutputs(outputs map[string]any) []dnsRecord {
 	return records
 }
 
-// recordKey returns a canonical string key for a DNS record,
-// used to correlate current and desired record sets in Diff.
+// recordKey returns a canonical string key for a DNS record. Includes
+// Data so duplicate (Type, Name) pairs with distinct values (e.g.,
+// multiple A/AAAA/TXT records on the same host) are NOT collapsed.
+// TTL/MX are intentionally excluded so a TTL-only or priority-only
+// change is detected as a change-of-existing rather than an
+// add-and-remove pair.
 func recordKey(r dnsRecord) string {
-	return fmt.Sprintf("%s/%s", strings.ToUpper(r.Type), strings.ToLower(r.Name))
+	return fmt.Sprintf("%s/%s/%s", strings.ToUpper(r.Type), strings.ToLower(r.Name), r.Data)
 }
 
 // diffRecords returns the FieldChange slice describing differences between
 // current and desired record sets. Each changed/added/removed record produces
 // one FieldChange entry.
+//
+// Records sharing the same (Type, Name) but distinct Data are treated as
+// independent records (e.g., two A records at the apex pointing at
+// different IPs). A change to one does not perturb the other.
 func diffRecords(current, desired []dnsRecord) []interfaces.FieldChange {
 	cur := make(map[string]dnsRecord, len(current))
 	for _, r := range current {
@@ -397,7 +417,8 @@ func diffRecords(current, desired []dnsRecord) []interfaces.FieldChange {
 			})
 			continue
 		}
-		if c.Data != d.Data || c.TTL != d.TTL || c.MX != d.MX {
+		// Same (Type, Name, Data) — only TTL/MX can still differ.
+		if c.TTL != d.TTL || c.MX != d.MX {
 			changes = append(changes, interfaces.FieldChange{
 				Path: "record/" + k,
 				Old:  recordToMap(c),
