@@ -58,6 +58,39 @@ wfctl secrets setup --plugin workflow-plugin-namecheap
 `A`, `AAAA`, `ALIAS`, `CAA`, `CNAME`, `MX`, `MXE`, `NS`, `TXT`,
 `URL`, `URL301`, `FRAME`
 
+## Multi-domain accounts
+
+Each `infra.dns` resource manages **one** domain's full record
+set. To manage multiple domains in a single Namecheap account,
+declare one resource per domain — all sharing the same
+`iac.provider.namecheap` module (credentials are not repeated):
+
+```yaml
+modules:
+  - name: namecheap
+    type: iac.provider.namecheap
+    config:
+      api_user:  ${NAMECHEAP_API_USER}
+      api_key:   ${NAMECHEAP_API_KEY}
+      client_ip: ${NAMECHEAP_CLIENT_IP}
+
+resources:
+  - name: site-a
+    type: infra.dns
+    config: { provider: namecheap, domain: site-a.com, records: [...] }
+  - name: site-b
+    type: infra.dns
+    config: { provider: namecheap, domain: site-b.org, records: [...] }
+  - name: site-c
+    type: infra.dns
+    config: { provider: namecheap, domain: site-c.io,  records: [...] }
+```
+
+This is the intentional shape — keeping one zone per resource
+makes Plan output unambiguous (you see exactly which zone is
+changing), keeps the whole-zone `setHosts` semantics tractable,
+and prevents `recordKey` collisions across domains.
+
 ## Caveats
 
 - **Single IP allowlist**: Namecheap does not support CIDR. CI runners
