@@ -67,7 +67,7 @@ func NewDNSDriverWithClient(c DNSClient) *DNSDriver {
 // pipeline ensures Create only fires when work is needed. Callers
 // that invoke Create directly outside that pipeline (rare) will
 // always incur a SetHosts call.
-func (d *DNSDriver) Create(ctx context.Context, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
+func (d *DNSDriver) Create(_ context.Context, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
 	domain, records, err := parseDNSSpec(spec)
 	if err != nil {
 		return nil, fmt.Errorf("dns create %q: %w", spec.Name, err)
@@ -75,7 +75,12 @@ func (d *DNSDriver) Create(ctx context.Context, spec interfaces.ResourceSpec) (*
 	if err := d.setHosts(domain, records); err != nil {
 		return nil, fmt.Errorf("dns create %q: %w", spec.Name, err)
 	}
-	return d.Read(ctx, interfaces.ResourceRef{Name: spec.Name, Type: "infra.dns", ProviderID: domain})
+	// Return outputs from the just-written desired set instead of a
+	// follow-up GetHosts call. The Namecheap setHosts call is
+	// authoritative — if it succeeded, the zone now matches `records`.
+	// Skipping the read halves the API call count per apply (relevant
+	// against the 20 req/min per-IP cap).
+	return dnsOutputFromRecords(spec.Name, domain, records), nil
 }
 
 // Read fetches the current record set for the domain.
@@ -113,7 +118,10 @@ func (d *DNSDriver) Update(ctx context.Context, ref interfaces.ResourceRef, spec
 	if err := d.setHosts(currentDomain, records); err != nil {
 		return nil, fmt.Errorf("dns update %q: %w", ref.Name, err)
 	}
-	return d.Read(ctx, ref)
+	// Skip the follow-up GetHosts; the desired set is authoritative
+	// after setHosts succeeds. See Create's rationale.
+	_ = ctx
+	return dnsOutputFromRecords(ref.Name, currentDomain, records), nil
 }
 
 // Delete clears all non-default records from the domain (sets an empty
@@ -325,6 +333,38 @@ func (d *DNSDriver) setHosts(domain string, records []dnsRecord) error {
 // Each record is stored under a numbered key (record_0, record_1,
 // …) rather than a `records: []map{...}` slice because some hosts
 // reject heterogeneous slices through structpb.
+// dnsOutputFromRecords produces a ResourceOutput from an in-memory
+// []dnsRecord without an upstream API call. Used by Create/Update to
+// return outputs reflecting the freshly-written desired state,
+// avoiding the read-after-write round trip against Namecheap's 20
+// req/min per-IP cap. EmailType is omitted (we don't know what
+// Namecheap will report) and can be re-read out-of-band via Read.
+func dnsOutputFromRecords(name, domain string, records []dnsRecord) *interfaces.ResourceOutput {
+	outputs := map[string]any{
+		"domain":       domain,
+		"record_count": len(records),
+	}
+	for i, r := range records {
+		rec := map[string]any{
+			"name":    r.Name,
+			"type":    r.Type,
+			"address": r.Data,
+			"ttl":     r.TTL,
+		}
+		if r.Type == "MX" {
+			rec["mx_pref"] = r.MX
+		}
+		outputs[fmt.Sprintf("record_%d", i)] = rec
+	}
+	return &interfaces.ResourceOutput{
+		Name:       name,
+		Type:       "infra.dns",
+		ProviderID: domain,
+		Outputs:    outputs,
+		Status:     "active",
+	}
+}
+
 func dnsOutput(name, domain string, resp *namecheap.DomainsDNSGetHostsCommandResponse) *interfaces.ResourceOutput {
 	outputs := map[string]any{
 		"domain":       domain,
