@@ -70,3 +70,46 @@ func TestDriver_Configure_ResetsClient(t *testing.T) {
 		t.Errorf("cfg not updated; got %v", d.cfg)
 	}
 }
+
+func TestConfig_Sandbox_DefaultFalse(t *testing.T) {
+	cfg := Config{APIUser: "u", APIKey: "k", ClientIP: "1.2.3.4"}
+	if cfg.Sandbox {
+		t.Error("Sandbox should default to false")
+	}
+}
+
+func TestConfig_Sandbox_CanBeEnabled(t *testing.T) {
+	cfg := Config{APIUser: "u", APIKey: "k", ClientIP: "1.2.3.4", Sandbox: true}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("sandbox config: %v", err)
+	}
+	if !cfg.Sandbox {
+		t.Error("Sandbox should be true")
+	}
+}
+
+func TestDNSRecord_Types(t *testing.T) {
+	// Verify DNSRecord struct can hold all supported record types.
+	supported := []string{"A", "AAAA", "CNAME", "MX", "TXT", "NS", "CAA"}
+	for _, rtype := range supported {
+		r := DNSRecord{Type: rtype, Name: "@", Data: "example.com", TTL: 1800}
+		if r.Type != rtype {
+			t.Errorf("DNSRecord.Type = %q, want %q", r.Type, rtype)
+		}
+	}
+}
+
+func TestDNSSpec_Struct(t *testing.T) {
+	spec := DNSSpec{
+		Domain: "example.com",
+		Records: []DNSRecord{
+			{Type: "A", Name: "@", Data: "1.2.3.4", TTL: 1800},
+		},
+	}
+	if spec.Domain != "example.com" {
+		t.Errorf("Domain = %q, want example.com", spec.Domain)
+	}
+	if len(spec.Records) != 1 {
+		t.Errorf("Records len = %d, want 1", len(spec.Records))
+	}
+}
