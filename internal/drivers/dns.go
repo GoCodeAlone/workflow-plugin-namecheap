@@ -98,6 +98,9 @@ func (d *DNSDriver) Read(_ context.Context, ref interfaces.ResourceRef) (*interf
 
 // Update replaces the full record set with the desired spec.
 func (d *DNSDriver) Update(ctx context.Context, ref interfaces.ResourceRef, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("dns update %q: %w", ref.Name, err)
+	}
 	currentDomain := ref.ProviderID
 	if currentDomain == "" {
 		currentDomain = ref.Name
@@ -115,12 +118,16 @@ func (d *DNSDriver) Update(ctx context.Context, ref interfaces.ResourceRef, spec
 	if !strings.EqualFold(specDomain, currentDomain) {
 		return nil, fmt.Errorf("dns update %q: spec.domain %q does not match current %q — domain change requires resource replace, not update", ref.Name, specDomain, currentDomain)
 	}
+	// Re-check ctx before the blocking API call so cancellations
+	// during config-parse don't waste an API call.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("dns update %q: %w", ref.Name, err)
+	}
 	if err := d.setHosts(currentDomain, records); err != nil {
 		return nil, fmt.Errorf("dns update %q: %w", ref.Name, err)
 	}
 	// Skip the follow-up GetHosts; the desired set is authoritative
 	// after setHosts succeeds. See Create's rationale.
-	_ = ctx
 	return dnsOutputFromRecords(ref.Name, currentDomain, records), nil
 }
 
@@ -225,7 +232,20 @@ func parseDNSSpec(spec interfaces.ResourceSpec) (string, []dnsRecord, error) {
 		return "", nil, fmt.Errorf("dns: config missing required key 'domain'")
 	}
 
-	rawRecords, _ := spec.Config["records"].([]any)
+	// records is REQUIRED — a missing key OR a wrongly-typed value
+	// must error out. Silently coercing to an empty slice would let
+	// SetHosts wipe the zone on the next apply (Namecheap setHosts
+	// is a whole-zone replace). An explicitly-empty `records: []`
+	// is allowed and DOES intentionally drop every record; only the
+	// missing-key / wrong-type case is rejected here.
+	rawRecordsAny, hasRecords := spec.Config["records"]
+	if !hasRecords {
+		return "", nil, fmt.Errorf("dns: config missing required key 'records' (use an explicit 'records: []' to drop every record)")
+	}
+	rawRecords, ok := rawRecordsAny.([]any)
+	if !ok {
+		return "", nil, fmt.Errorf("dns: config 'records' must be an array, got %T", rawRecordsAny)
+	}
 	records := make([]dnsRecord, 0, len(rawRecords))
 	for i, r := range rawRecords {
 		m, ok := r.(map[string]any)
@@ -523,13 +543,20 @@ func diffRecords(current, desired []dnsRecord) []interfaces.FieldChange {
 	return changes
 }
 
-// recordToMap converts a dnsRecord to map[string]any (structpb-safe).
+// recordToMap converts a dnsRecord to map[string]any (structpb-safe)
+// for inclusion in DiffResult.Changes. Field keys mirror the user-
+// facing config schema so plan output reads cleanly (`mx` not
+// `mx_pref`, `data` not `address`). The `mx` field is only included
+// for MX records since priority is meaningless for other types.
 func recordToMap(r dnsRecord) map[string]any {
-	return map[string]any{
-		"type":    r.Type,
-		"name":    r.Name,
-		"data":    r.Data,
-		"ttl":     r.TTL,
-		"mx_pref": r.MX,
+	m := map[string]any{
+		"type": r.Type,
+		"name": r.Name,
+		"data": r.Data,
+		"ttl":  r.TTL,
 	}
+	if r.Type == "MX" {
+		m["mx"] = r.MX
+	}
+	return m
 }

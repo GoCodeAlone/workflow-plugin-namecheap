@@ -733,3 +733,59 @@ func TestDiff_DomainChange_NeedsReplace(t *testing.T) {
 		t.Errorf("expected single ForceNew domain change; got %+v", res.Changes)
 	}
 }
+
+func TestParseDNSSpec_MissingRecords_Rejected(t *testing.T) {
+	// records is required — silently treating missing as empty would
+	// let SetHosts wipe the zone on apply.
+	spec := interfaces.ResourceSpec{
+		Name: "x.com", Type: "infra.dns",
+		Config: map[string]any{"domain": "x.com"},
+	}
+	_, _, err := parseDNSSpec(spec)
+	if err == nil {
+		t.Fatal("expected error for missing 'records' key")
+	}
+}
+
+func TestParseDNSSpec_NonArrayRecords_Rejected(t *testing.T) {
+	spec := interfaces.ResourceSpec{
+		Name: "x.com", Type: "infra.dns",
+		Config: map[string]any{"domain": "x.com", "records": "not-an-array"},
+	}
+	_, _, err := parseDNSSpec(spec)
+	if err == nil {
+		t.Fatal("expected error for non-array 'records'")
+	}
+}
+
+func TestRecordToMap_MXIncludesPriority(t *testing.T) {
+	m := recordToMap(dnsRecord{Type: "MX", Name: "@", Data: "mail.example.com", TTL: 1800, MX: 10})
+	if _, ok := m["mx"]; !ok {
+		t.Errorf("MX record missing 'mx' priority field; got %+v", m)
+	}
+	if _, leak := m["mx_pref"]; leak {
+		t.Errorf("recordToMap should not emit legacy 'mx_pref' key")
+	}
+}
+
+func TestRecordToMap_NonMXOmitsPriority(t *testing.T) {
+	m := recordToMap(dnsRecord{Type: "A", Name: "@", Data: "1.2.3.4", TTL: 1800})
+	if _, present := m["mx"]; present {
+		t.Errorf("non-MX record should not include 'mx' field; got %+v", m)
+	}
+}
+
+func TestUpdate_ContextCanceled(t *testing.T) {
+	d := NewDNSDriverWithClient(&fakeDNSClient{})
+	ref := interfaces.ResourceRef{Name: "example.com", Type: "infra.dns", ProviderID: "example.com"}
+	spec := interfaces.ResourceSpec{
+		Name: "example.com", Type: "infra.dns",
+		Config: map[string]any{"domain": "example.com", "records": []any{}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // immediately canceled
+	_, err := d.Update(ctx, ref, spec)
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+}
