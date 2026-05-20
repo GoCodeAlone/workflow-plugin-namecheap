@@ -67,9 +67,15 @@ func NewDNSDriverWithClient(c DNSClient) *DNSDriver {
 // pipeline ensures Create only fires when work is needed. Callers
 // that invoke Create directly outside that pipeline (rare) will
 // always incur a SetHosts call.
-func (d *DNSDriver) Create(_ context.Context, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
+func (d *DNSDriver) Create(ctx context.Context, spec interfaces.ResourceSpec) (*interfaces.ResourceOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("dns create %q: %w", spec.Name, err)
+	}
 	domain, records, err := parseDNSSpec(spec)
 	if err != nil {
+		return nil, fmt.Errorf("dns create %q: %w", spec.Name, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("dns create %q: %w", spec.Name, err)
 	}
 	if err := d.setHosts(domain, records); err != nil {
@@ -84,7 +90,10 @@ func (d *DNSDriver) Create(_ context.Context, spec interfaces.ResourceSpec) (*in
 }
 
 // Read fetches the current record set for the domain.
-func (d *DNSDriver) Read(_ context.Context, ref interfaces.ResourceRef) (*interfaces.ResourceOutput, error) {
+func (d *DNSDriver) Read(ctx context.Context, ref interfaces.ResourceRef) (*interfaces.ResourceOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("dns read %q: %w", ref.Name, err)
+	}
 	domain := ref.ProviderID
 	if domain == "" {
 		domain = ref.Name
@@ -133,7 +142,10 @@ func (d *DNSDriver) Update(ctx context.Context, ref interfaces.ResourceRef, spec
 
 // Delete clears all non-default records from the domain (sets an empty
 // record set). Namecheap does not delete the domain itself.
-func (d *DNSDriver) Delete(_ context.Context, ref interfaces.ResourceRef) error {
+func (d *DNSDriver) Delete(ctx context.Context, ref interfaces.ResourceRef) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("dns delete %q: %w", ref.Name, err)
+	}
 	domain := ref.ProviderID
 	if domain == "" {
 		domain = ref.Name
@@ -181,7 +193,10 @@ func (d *DNSDriver) Diff(_ context.Context, desired interfaces.ResourceSpec, cur
 }
 
 // HealthCheck probes connectivity to the domain by fetching its hosts.
-func (d *DNSDriver) HealthCheck(_ context.Context, ref interfaces.ResourceRef) (*interfaces.HealthResult, error) {
+func (d *DNSDriver) HealthCheck(ctx context.Context, ref interfaces.ResourceRef) (*interfaces.HealthResult, error) {
+	if err := ctx.Err(); err != nil {
+		return &interfaces.HealthResult{Healthy: false, Message: err.Error()}, nil
+	}
 	domain := ref.ProviderID
 	if domain == "" {
 		domain = ref.Name

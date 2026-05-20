@@ -789,3 +789,29 @@ func TestUpdate_ContextCanceled(t *testing.T) {
 		t.Fatal("expected error for canceled context")
 	}
 }
+
+func TestCtxCanceled_AllMethods(t *testing.T) {
+	d := NewDNSDriverWithClient(&fakeDNSClient{})
+	ref := interfaces.ResourceRef{Name: "example.com", Type: "infra.dns", ProviderID: "example.com"}
+	spec := interfaces.ResourceSpec{
+		Name: "example.com", Type: "infra.dns",
+		Config: map[string]any{"domain": "example.com", "records": []any{}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := d.Create(ctx, spec); err == nil {
+		t.Error("Create: expected error for canceled ctx")
+	}
+	if _, err := d.Read(ctx, ref); err == nil {
+		t.Error("Read: expected error for canceled ctx")
+	}
+	if err := d.Delete(ctx, ref); err == nil {
+		t.Error("Delete: expected error for canceled ctx")
+	}
+	if res, err := d.HealthCheck(ctx, ref); err != nil {
+		t.Errorf("HealthCheck: unexpected err: %v", err)
+	} else if res.Healthy {
+		t.Error("HealthCheck: expected unhealthy for canceled ctx")
+	}
+}
