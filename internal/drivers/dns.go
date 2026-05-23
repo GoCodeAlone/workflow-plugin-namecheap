@@ -435,6 +435,9 @@ func dnsOutput(name, domain string, resp *namecheap.DomainsDNSGetHostsCommandRes
 		if result.EmailType != nil {
 			outputs["email_type"] = *result.EmailType
 		}
+		if result.IsUsingOurDNS != nil {
+			outputs["is_using_our_dns"] = *result.IsUsingOurDNS
+		}
 	}
 	return &interfaces.ResourceOutput{
 		Name:       name,

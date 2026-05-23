@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-namecheap/internal/drivers"
 	pb "github.com/GoCodeAlone/workflow/plugin/external/proto"
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
+	"github.com/namecheap/go-namecheap-sdk/v2/namecheap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -200,6 +202,57 @@ func TestNcIaCServer_Destroy_BeforeInitialize(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when Destroy called before Initialize")
 	}
+}
+
+func TestNcProvider_ImportReadsDNSState(t *testing.T) {
+	p := &ncProvider{driver: drivers.NewDNSDriverWithClient(&fakeNCImportClient{})}
+	state, err := p.Import(context.Background(), "example.com", "infra.dns")
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if state.Provider != "namecheap" {
+		t.Fatalf("Provider = %q, want namecheap", state.Provider)
+	}
+	if state.Outputs["is_using_our_dns"] != true {
+		t.Fatalf("is_using_our_dns = %#v, want true", state.Outputs["is_using_our_dns"])
+	}
+}
+
+type fakeNCImportClient struct{}
+
+func (fakeNCImportClient) GetHosts(domain string) (*namecheap.DomainsDNSGetHostsCommandResponse, error) {
+	d := domain
+	emailType := "MX"
+	usingOurDNS := true
+	name := "@"
+	recordType := "TXT"
+	address := "imported"
+	ttl := 300
+	hosts := []namecheap.DomainsDNSHostRecordDetailed{{
+		Name:    &name,
+		Type:    &recordType,
+		Address: &address,
+		TTL:     &ttl,
+	}}
+	return &namecheap.DomainsDNSGetHostsCommandResponse{
+		DomainDNSGetHostsResult: &namecheap.DomainDNSGetHostsResult{
+			Domain:        &d,
+			EmailType:     &emailType,
+			IsUsingOurDNS: &usingOurDNS,
+			Hosts:         &hosts,
+		},
+	}, nil
+}
+
+func (fakeNCImportClient) SetHosts(args *namecheap.DomainsDNSSetHostsArgs) (*namecheap.DomainsDNSSetHostsCommandResponse, error) {
+	domain := ""
+	if args.Domain != nil {
+		domain = *args.Domain
+	}
+	ok := true
+	return &namecheap.DomainsDNSSetHostsCommandResponse{
+		DomainDNSSetHostsResult: &namecheap.DomainDNSSetHostsResult{Domain: &domain, IsSuccess: &ok},
+	}, nil
 }
 
 // ---- Marshalling helpers ----

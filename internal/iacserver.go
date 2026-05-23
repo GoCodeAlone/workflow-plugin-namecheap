@@ -294,8 +294,29 @@ func (p *ncProvider) DetectDrift(_ context.Context, _ []interfaces.ResourceRef) 
 	return nil, nil
 }
 
-func (p *ncProvider) Import(_ context.Context, _ string, _ string) (*interfaces.ResourceState, error) {
-	return nil, fmt.Errorf("namecheap: Import not supported via provider shim; use iacserver.Import")
+func (p *ncProvider) Import(ctx context.Context, cloudID string, resourceType string) (*interfaces.ResourceState, error) {
+	if resourceType == "" {
+		resourceType = "infra.dns"
+	}
+	d, err := p.ResourceDriver(resourceType)
+	if err != nil {
+		return nil, err
+	}
+	out, err := d.Read(ctx, interfaces.ResourceRef{Name: cloudID, Type: resourceType, ProviderID: cloudID})
+	if err != nil {
+		return nil, fmt.Errorf("namecheap import: %w", err)
+	}
+	now := time.Now()
+	return &interfaces.ResourceState{
+		ID:         cloudID,
+		Name:       out.Name,
+		Type:       out.Type,
+		Provider:   "namecheap",
+		ProviderID: out.ProviderID,
+		Outputs:    out.Outputs,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}, nil
 }
 
 func (p *ncProvider) ResolveSizing(_ string, _ interfaces.Size, _ *interfaces.ResourceHints) (*interfaces.ProviderSizing, error) {

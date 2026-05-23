@@ -16,6 +16,11 @@ ahead of Apply) reads existing records via `GetHosts` and reports
 `Create`/`Update` writes the full desired list in a single `setHosts`
 call, replacing the zone wholesale.
 
+Import reads Namecheap's current hosts and stores record metadata plus
+`email_type` and `is_using_our_dns` in Workflow state. That authority metadata
+is useful when adopting domains before a migration: a domain can be registered
+at Namecheap without actually using Namecheap authoritative DNS.
+
 ## Configuration
 
 ```yaml
