@@ -181,6 +181,9 @@ func TestDNSDriver_Read_ReturnsOutput(t *testing.T) {
 	if cnt, _ := out.Outputs["record_count"].(int); cnt != 1 {
 		t.Errorf("record_count = %v, want 1", out.Outputs["record_count"])
 	}
+	if got := out.Outputs["is_using_our_dns"]; got != true {
+		t.Errorf("is_using_our_dns = %v, want true", got)
+	}
 	// Each record stored as record_0, record_1, ...
 	rec0, ok := out.Outputs["record_0"].(map[string]any)
 	if !ok {
