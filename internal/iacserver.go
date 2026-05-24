@@ -31,7 +31,7 @@ import (
 )
 
 // Version is stamped at build time via -ldflags.
-var Version = "dev"
+var Version = "0.0.0"
 
 // ncIaCServer satisfies pb.IaCProviderRequiredServer +
 // pb.IaCProviderFinalizerServer for the Namecheap provider.
