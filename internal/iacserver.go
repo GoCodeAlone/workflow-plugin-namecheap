@@ -247,17 +247,24 @@ func (s *ncIaCServer) Import(ctx context.Context, req *pb.ImportRequest) (*pb.Im
 	if err != nil {
 		return nil, fmt.Errorf("namecheap iacserver: marshal import outputs: %w", err)
 	}
+	appliedConfig := importedAppliedConfigNC(out.Type, out.Outputs)
+	appliedConfigJSON, err := json.Marshal(appliedConfig)
+	if err != nil {
+		return nil, fmt.Errorf("namecheap iacserver: marshal import applied config: %w", err)
+	}
 	now := time.Now()
 	return &pb.ImportResponse{
 		State: &pb.ResourceState{
-			Id:          out.ProviderID,
-			Name:        out.Name,
-			Type:        out.Type,
-			Provider:    "namecheap",
-			ProviderId:  out.ProviderID,
-			OutputsJson: outputsJSON,
-			CreatedAt:   timestamppb.New(now),
-			UpdatedAt:   timestamppb.New(now),
+			Id:                  out.ProviderID,
+			Name:                out.Name,
+			Type:                out.Type,
+			Provider:            "namecheap",
+			ProviderId:          out.ProviderID,
+			AppliedConfigJson:   appliedConfigJSON,
+			AppliedConfigSource: "adoption",
+			OutputsJson:         outputsJSON,
+			CreatedAt:           timestamppb.New(now),
+			UpdatedAt:           timestamppb.New(now),
 		},
 	}, nil
 }
@@ -353,14 +360,16 @@ func (p *ncProvider) Import(ctx context.Context, cloudID string, resourceType st
 	}
 	now := time.Now()
 	return &interfaces.ResourceState{
-		ID:         cloudID,
-		Name:       out.Name,
-		Type:       out.Type,
-		Provider:   "namecheap",
-		ProviderID: out.ProviderID,
-		Outputs:    out.Outputs,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:                  cloudID,
+		Name:                out.Name,
+		Type:                out.Type,
+		Provider:            "namecheap",
+		ProviderID:          out.ProviderID,
+		AppliedConfig:       importedAppliedConfigNC(out.Type, out.Outputs),
+		AppliedConfigSource: "adoption",
+		Outputs:             out.Outputs,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}, nil
 }
 
@@ -512,18 +521,19 @@ func stateFromPBNC(s *pb.ResourceState) (*interfaces.ResourceState, error) {
 		return nil, err
 	}
 	return &interfaces.ResourceState{
-		ID:            s.GetId(),
-		Name:          s.GetName(),
-		Type:          s.GetType(),
-		Provider:      s.GetProvider(),
-		ProviderRef:   s.GetProviderRef(),
-		ProviderID:    s.GetProviderId(),
-		ConfigHash:    s.GetConfigHash(),
-		AppliedConfig: applied,
-		Outputs:       outputs,
-		Dependencies:  append([]string(nil), s.GetDependencies()...),
-		CreatedAt:     timeFmPBNC(s.GetCreatedAt()),
-		UpdatedAt:     timeFmPBNC(s.GetUpdatedAt()),
+		ID:                  s.GetId(),
+		Name:                s.GetName(),
+		Type:                s.GetType(),
+		Provider:            s.GetProvider(),
+		ProviderRef:         s.GetProviderRef(),
+		ProviderID:          s.GetProviderId(),
+		ConfigHash:          s.GetConfigHash(),
+		AppliedConfig:       applied,
+		AppliedConfigSource: s.GetAppliedConfigSource(),
+		Outputs:             outputs,
+		Dependencies:        append([]string(nil), s.GetDependencies()...),
+		CreatedAt:           timeFmPBNC(s.GetCreatedAt()),
+		UpdatedAt:           timeFmPBNC(s.GetUpdatedAt()),
 	}, nil
 }
 
@@ -554,18 +564,19 @@ func stateToPBNC(st *interfaces.ResourceState) (*pb.ResourceState, error) {
 		return nil, err
 	}
 	return &pb.ResourceState{
-		Id:                st.ID,
-		Name:              st.Name,
-		Type:              st.Type,
-		Provider:          st.Provider,
-		ProviderRef:       st.ProviderRef,
-		ProviderId:        st.ProviderID,
-		ConfigHash:        st.ConfigHash,
-		AppliedConfigJson: appliedJSON,
-		OutputsJson:       outputsJSON,
-		Dependencies:      append([]string(nil), st.Dependencies...),
-		CreatedAt:         timeToPBNC(st.CreatedAt),
-		UpdatedAt:         timeToPBNC(st.UpdatedAt),
+		Id:                  st.ID,
+		Name:                st.Name,
+		Type:                st.Type,
+		Provider:            st.Provider,
+		ProviderRef:         st.ProviderRef,
+		ProviderId:          st.ProviderID,
+		ConfigHash:          st.ConfigHash,
+		AppliedConfigJson:   appliedJSON,
+		AppliedConfigSource: st.AppliedConfigSource,
+		OutputsJson:         outputsJSON,
+		Dependencies:        append([]string(nil), st.Dependencies...),
+		CreatedAt:           timeToPBNC(st.CreatedAt),
+		UpdatedAt:           timeToPBNC(st.UpdatedAt),
 	}, nil
 }
 
@@ -712,6 +723,71 @@ func planFromPBNC(p *pb.IaCPlan) (*interfaces.IaCPlan, error) {
 		SchemaVersion: int(p.GetSchemaVersion()),
 		InputSnapshot: copyStringMapNC(p.GetInputSnapshot()),
 	}, nil
+}
+
+func importedAppliedConfigNC(resourceType string, outputs map[string]any) map[string]any {
+	cfg := map[string]any{"provider": "namecheap"}
+	switch resourceType {
+	case "infra.domain_transfer":
+		copyIfPresentNC(cfg, outputs, "domain")
+		copyIfPresentNC(cfg, outputs, "transfer_id")
+	default:
+		copyIfPresentNC(cfg, outputs, "domain")
+		cfg["records"] = importedDNSRecordsNC(outputs)
+	}
+	return cfg
+}
+
+func importedDNSRecordsNC(outputs map[string]any) []map[string]any {
+	count := intFromOutputNC(outputs, "record_count")
+	records := make([]map[string]any, 0, count)
+	for i := 0; i < count; i++ {
+		raw, ok := outputs[fmt.Sprintf("record_%d", i)]
+		if !ok {
+			continue
+		}
+		rawRecord, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		record := map[string]any{}
+		copyIfPresentNC(record, rawRecord, "type")
+		copyIfPresentNC(record, rawRecord, "name")
+		if value, ok := rawRecord["address"]; ok {
+			record["data"] = value
+		}
+		copyIfPresentNC(record, rawRecord, "ttl")
+		if value, ok := rawRecord["mx_pref"]; ok {
+			record["mx"] = value
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func intFromOutputNC(outputs map[string]any, key string) int {
+	if outputs == nil {
+		return 0
+	}
+	switch v := outputs[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func copyIfPresentNC(dst map[string]any, src map[string]any, key string) {
+	if src == nil {
+		return
+	}
+	if value, ok := src[key]; ok {
+		dst[key] = value
+	}
 }
 
 func timeToPBNC(t time.Time) *timestamppb.Timestamp {
