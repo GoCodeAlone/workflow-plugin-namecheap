@@ -405,6 +405,11 @@ func dnsOutput(name, domain string, resp *namecheap.DomainsDNSGetHostsCommandRes
 		"domain":       domain,
 		"record_count": 0,
 	}
+	authority := map[string]any{
+		"role":      "registrar_origin",
+		"registrar": "Namecheap",
+		"dns_host":  "",
+	}
 	if resp != nil && resp.DomainDNSGetHostsResult != nil {
 		result := resp.DomainDNSGetHostsResult
 		if result.Hosts != nil {
@@ -434,11 +439,18 @@ func dnsOutput(name, domain string, resp *namecheap.DomainsDNSGetHostsCommandRes
 		}
 		if result.EmailType != nil {
 			outputs["email_type"] = *result.EmailType
+			authority["email_type"] = *result.EmailType
 		}
 		if result.IsUsingOurDNS != nil {
 			outputs["is_using_our_dns"] = *result.IsUsingOurDNS
+			authority["is_using_our_dns"] = *result.IsUsingOurDNS
+			if *result.IsUsingOurDNS {
+				authority["role"] = "registrar_and_dns"
+				authority["dns_host"] = "Namecheap"
+			}
 		}
 	}
+	outputs["authority"] = authority
 	return &interfaces.ResourceOutput{
 		Name:       name,
 		Type:       "infra.dns",
