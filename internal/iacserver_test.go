@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-namecheap/internal/drivers"
+	"github.com/GoCodeAlone/workflow/interfaces"
 	pb "github.com/GoCodeAlone/workflow/plugin/external/proto"
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 	"github.com/namecheap/go-namecheap-sdk/v2/namecheap"
@@ -219,6 +220,19 @@ func TestNcProvider_ImportReadsDNSState(t *testing.T) {
 	if state.Outputs["is_using_our_dns"] != true {
 		t.Fatalf("is_using_our_dns = %#v, want true", state.Outputs["is_using_our_dns"])
 	}
+	if state.AppliedConfigSource != "adoption" {
+		t.Fatalf("AppliedConfigSource = %q, want adoption", state.AppliedConfigSource)
+	}
+	if state.AppliedConfig["provider"] != "namecheap" || state.AppliedConfig["domain"] != "example.com" {
+		t.Fatalf("AppliedConfig = %#v, want provider/domain", state.AppliedConfig)
+	}
+	records, ok := state.AppliedConfig["records"].([]map[string]any)
+	if !ok || len(records) != 1 {
+		t.Fatalf("AppliedConfig records = %#v, want one record", state.AppliedConfig["records"])
+	}
+	if records[0]["type"] != "TXT" || records[0]["name"] != "@" || records[0]["data"] != "imported" {
+		t.Fatalf("AppliedConfig record = %#v, want user-facing TXT record", records[0])
+	}
 }
 
 func TestNcProvider_ImportReadsTransferStatus(t *testing.T) {
@@ -232,6 +246,44 @@ func TestNcProvider_ImportReadsTransferStatus(t *testing.T) {
 	}
 	if state.ProviderID != "15" || state.Outputs["status"] != "Queued for submission" {
 		t.Fatalf("state = %#v", state)
+	}
+	if state.AppliedConfigSource != "adoption" {
+		t.Fatalf("AppliedConfigSource = %q, want adoption", state.AppliedConfigSource)
+	}
+	if state.AppliedConfig["provider"] != "namecheap" || state.AppliedConfig["transfer_id"] != "15" {
+		t.Fatalf("AppliedConfig = %#v, want provider/transfer_id", state.AppliedConfig)
+	}
+	if _, ok := state.AppliedConfig["epp_code"]; ok {
+		t.Fatalf("AppliedConfig = %#v, epp_code must stay out of imported transfer config", state.AppliedConfig)
+	}
+	if _, ok := state.AppliedConfig["confirm_transfer"]; ok {
+		t.Fatalf("AppliedConfig = %#v, confirm_transfer must not be synthesized on import", state.AppliedConfig)
+	}
+}
+
+func TestNcIaCServer_ImportBuildsAdoptionConfig(t *testing.T) {
+	srv := &ncIaCServer{
+		dnsDriver:      drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		transferDriver: drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+	}
+	resp, err := srv.Import(context.Background(), &pb.ImportRequest{ProviderId: "example.com", ResourceType: "infra.dns"})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if resp.GetState().GetAppliedConfigSource() != "adoption" {
+		t.Fatalf("AppliedConfigSource = %q, want adoption", resp.GetState().GetAppliedConfigSource())
+	}
+	var applied map[string]any
+	if err := json.Unmarshal(resp.GetState().GetAppliedConfigJson(), &applied); err != nil {
+		t.Fatalf("unmarshal applied config: %v", err)
+	}
+	records, ok := applied["records"].([]any)
+	if !ok || len(records) != 1 {
+		t.Fatalf("AppliedConfig records = %#v, want one record", applied["records"])
+	}
+	record, ok := records[0].(map[string]any)
+	if !ok || record["type"] != "TXT" || record["data"] != "imported" || record["address"] != nil {
+		t.Fatalf("AppliedConfig record = %#v, want user-facing record without Namecheap address key", records[0])
 	}
 }
 
@@ -373,6 +425,35 @@ func TestPlanToPBNC_RoundTrip(t *testing.T) {
 	}
 	if len(re.GetActions()) != 1 {
 		t.Errorf("re-encoded actions len = %d, want 1", len(re.GetActions()))
+	}
+}
+
+func TestStatePBNC_RoundTripPreservesAppliedConfigSource(t *testing.T) {
+	state := &interfaces.ResourceState{
+		ID:                  "example.com",
+		Name:                "example.com",
+		Type:                "infra.dns",
+		Provider:            "namecheap",
+		ProviderID:          "example.com",
+		AppliedConfig:       map[string]any{"provider": "namecheap", "domain": "example.com"},
+		AppliedConfigSource: "adoption",
+		Outputs:             map[string]any{"domain": "example.com"},
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+	}
+	wire, err := stateToPBNC(state)
+	if err != nil {
+		t.Fatalf("stateToPBNC: %v", err)
+	}
+	if wire.GetAppliedConfigSource() != "adoption" {
+		t.Fatalf("wire AppliedConfigSource = %q, want adoption", wire.GetAppliedConfigSource())
+	}
+	roundTrip, err := stateFromPBNC(wire)
+	if err != nil {
+		t.Fatalf("stateFromPBNC: %v", err)
+	}
+	if roundTrip.AppliedConfigSource != "adoption" {
+		t.Fatalf("roundTrip AppliedConfigSource = %q, want adoption", roundTrip.AppliedConfigSource)
 	}
 }
 
