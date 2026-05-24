@@ -165,9 +165,11 @@ func TestDNSDriver_Create_PropagatesSetHostsError(t *testing.T) {
 func TestDNSDriver_Read_ReturnsOutput(t *testing.T) {
 	fake := &fakeDNSClient{
 		getHosts: func(domain string) (*namecheap.DomainsDNSGetHostsCommandResponse, error) {
-			return hostResponse(domain, []namecheap.DomainsDNSHostRecordDetailed{
+			resp := hostResponse(domain, []namecheap.DomainsDNSHostRecordDetailed{
 				{Name: ptr("@"), Type: ptr("A"), Address: ptr("1.2.3.4"), TTL: ptr(1800), MXPref: ptr(10), HostId: ptr(1), AssociatedAppTitle: ptr(""), FriendlyName: ptr(""), IsActive: ptr(true), IsDDNSEnabled: ptr(false)},
-			}), nil
+			})
+			resp.DomainDNSGetHostsResult.EmailType = ptr("MX")
+			return resp, nil
 		},
 	}
 	d := NewDNSDriverWithClient(fake)
@@ -183,6 +185,25 @@ func TestDNSDriver_Read_ReturnsOutput(t *testing.T) {
 	}
 	if got := out.Outputs["is_using_our_dns"]; got != true {
 		t.Errorf("is_using_our_dns = %v, want true", got)
+	}
+	authority, ok := out.Outputs["authority"].(map[string]any)
+	if !ok {
+		t.Fatalf("authority = %T, want map[string]any", out.Outputs["authority"])
+	}
+	if got := authority["role"]; got != "registrar_and_dns" {
+		t.Fatalf("authority.role = %v, want registrar_and_dns", got)
+	}
+	if got := authority["registrar"]; got != "Namecheap" {
+		t.Fatalf("authority.registrar = %v, want Namecheap", got)
+	}
+	if got := authority["dns_host"]; got != "Namecheap" {
+		t.Fatalf("authority.dns_host = %v, want Namecheap", got)
+	}
+	if got := authority["email_type"]; got != "MX" {
+		t.Fatalf("authority.email_type = %v, want MX", got)
+	}
+	if got := authority["is_using_our_dns"]; got != true {
+		t.Fatalf("authority.is_using_our_dns = %v, want true", got)
 	}
 	// Each record stored as record_0, record_1, ...
 	rec0, ok := out.Outputs["record_0"].(map[string]any)
