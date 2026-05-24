@@ -76,11 +76,11 @@ func TestNcIaCServer_Capabilities(t *testing.T) {
 	}
 
 	caps := capsResp.GetCapabilities()
-	if len(caps) != 1 {
-		t.Fatalf("Capabilities len = %d, want 1", len(caps))
+	if len(caps) != 2 {
+		t.Fatalf("Capabilities len = %d, want 2", len(caps))
 	}
-	if caps[0].GetResourceType() != "infra.dns" {
-		t.Errorf("ResourceType = %q, want infra.dns", caps[0].GetResourceType())
+	if caps[0].GetResourceType() != "infra.dns" || caps[1].GetResourceType() != "infra.domain_transfer" {
+		t.Errorf("Capabilities = %#v, want infra.dns and infra.domain_transfer", caps)
 	}
 	if len(caps[0].GetOperations()) == 0 {
 		t.Error("infra.dns capability has no operations")
@@ -205,7 +205,10 @@ func TestNcIaCServer_Destroy_BeforeInitialize(t *testing.T) {
 }
 
 func TestNcProvider_ImportReadsDNSState(t *testing.T) {
-	p := &ncProvider{driver: drivers.NewDNSDriverWithClient(&fakeNCImportClient{})}
+	p := &ncProvider{
+		dnsDriver:      drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		transferDriver: drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+	}
 	state, err := p.Import(context.Background(), "example.com", "infra.dns")
 	if err != nil {
 		t.Fatalf("Import: %v", err)
@@ -215,6 +218,20 @@ func TestNcProvider_ImportReadsDNSState(t *testing.T) {
 	}
 	if state.Outputs["is_using_our_dns"] != true {
 		t.Fatalf("is_using_our_dns = %#v, want true", state.Outputs["is_using_our_dns"])
+	}
+}
+
+func TestNcProvider_ImportReadsTransferStatus(t *testing.T) {
+	p := &ncProvider{
+		dnsDriver:      drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		transferDriver: drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+	}
+	state, err := p.Import(context.Background(), "15", "infra.domain_transfer")
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if state.ProviderID != "15" || state.Outputs["status"] != "Queued for submission" {
+		t.Fatalf("state = %#v", state)
 	}
 }
 
@@ -253,6 +270,16 @@ func (fakeNCImportClient) SetHosts(args *namecheap.DomainsDNSSetHostsArgs) (*nam
 	return &namecheap.DomainsDNSSetHostsCommandResponse{
 		DomainDNSSetHostsResult: &namecheap.DomainDNSSetHostsResult{Domain: &domain, IsSuccess: &ok},
 	}, nil
+}
+
+type fakeNCTransferClient struct{}
+
+func (fakeNCTransferClient) CreateTransfer(_ context.Context, args drivers.TransferCreateArgs) (*drivers.TransferCreateResult, error) {
+	return &drivers.TransferCreateResult{Domain: args.Domain, Transfer: true, TransferID: "15"}, nil
+}
+
+func (fakeNCTransferClient) GetTransferStatus(_ context.Context, transferID string) (*drivers.TransferStatus, error) {
+	return &drivers.TransferStatus{TransferID: transferID, Status: "Queued for submission", StatusID: "-1"}, nil
 }
 
 // ---- Marshalling helpers ----
