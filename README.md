@@ -3,8 +3,8 @@
 [![CI](https://github.com/GoCodeAlone/workflow-plugin-namecheap/actions/workflows/ci.yml/badge.svg)](https://github.com/GoCodeAlone/workflow-plugin-namecheap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Namecheap DNS provider for the GoCodeAlone/workflow IaC surface.
-Implements the `infra.dns` resource type using the
+Namecheap DNS and domain-transfer provider for the GoCodeAlone/workflow IaC surface.
+Implements `infra.dns` and guarded `infra.domain_transfer` resources using the
 [Namecheap API](https://www.namecheap.com/support/api/methods/)
 via the [official Go SDK](https://github.com/namecheap/go-namecheap-sdk).
 
@@ -45,6 +45,33 @@ resources:
         - { type: MX,    name: "@",   data: mail.example.com., ttl: 1800, mx: 10 }
         - { type: TXT,   name: "@",   data: "v=spf1 include:_spf.example.com ~all", ttl: 300 }
 ```
+
+## Domain Transfers
+
+`infra.domain_transfer` starts and tracks a transfer into Namecheap. Creating a
+transfer places a chargeable Namecheap order, so `confirm_transfer: true` is
+required. The EPP/auth code is sent to Namecheap but is never stored in outputs.
+
+```yaml
+resources:
+  - name: example-com-transfer
+    type: infra.domain_transfer
+    config:
+      provider: namecheap
+      domain: example.com
+      years: 1
+      epp_code: ${EXAMPLE_COM_EPP_CODE}
+      confirm_transfer: true
+      # optional
+      promotion_code: SAVE
+      add_free_whoisguard: true
+      wg_enabled: true
+```
+
+Namecheap's API currently requires `years: 1` for transfer creation and only
+supports a limited TLD set for API transfers. Use `wfctl import` with resource
+type `infra.domain_transfer` and provider ID set to the transfer ID to track an
+existing transfer's status.
 
 ## Required secrets
 

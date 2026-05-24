@@ -1,7 +1,7 @@
 {
   "name": "workflow-plugin-namecheap",
   "version": "0.1.0",
-  "description": "Namecheap DNS provider for workflow IaC (infra.dns)",
+  "description": "Namecheap DNS and domain-transfer provider for workflow IaC",
   "author": "GoCodeAlone",
   "license": "MIT",
   "type": "external",
@@ -12,7 +12,8 @@
     "dns",
     "namecheap",
     "iac",
-    "infra.dns"
+    "infra.dns",
+    "infra.domain_transfer"
   ],
   "homepage": "https://github.com/GoCodeAlone/workflow-plugin-namecheap",
   "repository": "https://github.com/GoCodeAlone/workflow-plugin-namecheap",
@@ -23,7 +24,8 @@
     "stepTypes": [],
     "triggerTypes": [],
     "resourceTypes": [
-      "infra.dns"
+      "infra.dns",
+      "infra.domain_transfer"
     ]
   },
   "iacProvider": {

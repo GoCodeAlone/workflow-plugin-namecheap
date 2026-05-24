@@ -39,8 +39,9 @@ type ncIaCServer struct {
 	pb.UnimplementedIaCProviderRequiredServer
 	pb.UnimplementedIaCProviderFinalizerServer
 
-	// driver is populated by Initialize.
-	driver *drivers.DNSDriver
+	// drivers are populated by Initialize.
+	dnsDriver      *drivers.DNSDriver
+	transferDriver *drivers.TransferDriver
 	// cfg is the last-applied provider config.
 	cfg Config
 }
@@ -75,6 +76,11 @@ func (s *ncIaCServer) Capabilities(_ context.Context, _ *pb.CapabilitiesRequest)
 				Tier:         1,
 				Operations:   []string{"create", "read", "update", "delete"},
 			},
+			{
+				ResourceType: "infra.domain_transfer",
+				Tier:         1,
+				Operations:   []string{"create", "read"},
+			},
 		},
 		ComputePlanVersion: "v2",
 	}, nil
@@ -106,13 +112,14 @@ func (s *ncIaCServer) Initialize(_ context.Context, req *pb.InitializeRequest) (
 		ClientIp:   cfg.ClientIP,
 		UseSandbox: cfg.Sandbox,
 	})
-	s.driver = drivers.NewDNSDriver(client)
+	s.dnsDriver = drivers.NewDNSDriver(client)
+	s.transferDriver = drivers.NewTransferDriver(client)
 	return &pb.InitializeResponse{}, nil
 }
 
 // Plan computes the desired → current diff via platform.ComputePlan.
 func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanResponse, error) {
-	if s.driver == nil {
+	if s.dnsDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Plan called before Initialize")
 	}
 	desired, err := specsFromPBNC(req.GetDesired())
@@ -123,7 +130,7 @@ func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRe
 	if err != nil {
 		return nil, fmt.Errorf("namecheap iacserver: decode Plan current: %w", err)
 	}
-	p := &ncProvider{driver: s.driver}
+	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver}
 	plan, err := platform.ComputePlan(ctx, p, desired, current)
 	if err != nil {
 		return nil, err
@@ -137,14 +144,18 @@ func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRe
 
 // Destroy deletes every listed resource by clearing its DNS records.
 func (s *ncIaCServer) Destroy(ctx context.Context, req *pb.DestroyRequest) (*pb.DestroyResponse, error) {
-	if s.driver == nil {
+	if s.dnsDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Destroy called before Initialize")
 	}
 	refs := refsFromPBNC(req.GetRefs())
 	var destroyed []string
 	var errs []*pb.ActionError
 	for _, ref := range refs {
-		if err := s.driver.Delete(ctx, ref); err != nil {
+		driver, err := s.resourceDriver(ref.Type)
+		if err == nil {
+			err = driver.Delete(ctx, ref)
+		}
+		if err != nil {
 			errs = append(errs, &pb.ActionError{Resource: ref.Name, Action: "delete", Error: err.Error()})
 		} else {
 			destroyed = append(destroyed, ref.Name)
@@ -160,13 +171,22 @@ func (s *ncIaCServer) Destroy(ctx context.Context, req *pb.DestroyRequest) (*pb.
 
 // Status returns the live status of the requested resources.
 func (s *ncIaCServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
-	if s.driver == nil {
+	if s.dnsDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Status called before Initialize")
 	}
 	refs := refsFromPBNC(req.GetRefs())
 	statuses := make([]*pb.ResourceStatus, 0, len(refs))
 	for _, ref := range refs {
-		out, err := s.driver.Read(ctx, ref)
+		driver, err := s.resourceDriver(ref.Type)
+		if err != nil {
+			statuses = append(statuses, &pb.ResourceStatus{
+				Name:   ref.Name,
+				Type:   ref.Type,
+				Status: "error",
+			})
+			continue
+		}
+		out, err := driver.Read(ctx, ref)
 		if err != nil {
 			statuses = append(statuses, &pb.ResourceStatus{
 				Name:   ref.Name,
@@ -203,15 +223,23 @@ func (s *ncIaCServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.St
 
 // Import imports a domain's DNS state into IaC state.
 func (s *ncIaCServer) Import(ctx context.Context, req *pb.ImportRequest) (*pb.ImportResponse, error) {
-	if s.driver == nil {
+	if s.dnsDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Import called before Initialize")
+	}
+	resourceType := req.GetResourceType()
+	if resourceType == "" {
+		resourceType = "infra.dns"
 	}
 	ref := interfaces.ResourceRef{
 		Name:       req.GetProviderId(),
-		Type:       "infra.dns",
+		Type:       resourceType,
 		ProviderID: req.GetProviderId(),
 	}
-	out, err := s.driver.Read(ctx, ref)
+	driver, err := s.resourceDriver(resourceType)
+	if err != nil {
+		return nil, err
+	}
+	out, err := driver.Read(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("namecheap iacserver: import %q: %w", req.GetProviderId(), err)
 	}
@@ -234,6 +262,17 @@ func (s *ncIaCServer) Import(ctx context.Context, req *pb.ImportRequest) (*pb.Im
 	}, nil
 }
 
+func (s *ncIaCServer) resourceDriver(resourceType string) (interfaces.ResourceDriver, error) {
+	switch resourceType {
+	case "", "infra.dns":
+		return s.dnsDriver, nil
+	case "infra.domain_transfer":
+		return s.transferDriver, nil
+	default:
+		return nil, fmt.Errorf("namecheap: unsupported resource type %q", resourceType)
+	}
+}
+
 // ResolveSizing is not meaningful for DNS; returns nil sizing.
 func (s *ncIaCServer) ResolveSizing(_ context.Context, _ *pb.ResolveSizingRequest) (*pb.ResolveSizingResponse, error) {
 	return &pb.ResolveSizingResponse{Sizing: nil}, nil
@@ -251,9 +290,10 @@ func (s *ncIaCServer) FinalizeApply(_ context.Context, _ *pb.FinalizeApplyReques
 
 // ---- ncProvider bridges ncIaCServer → interfaces.IaCProvider for platform.ComputePlan ----
 
-// ncProvider satisfies interfaces.IaCProvider using the single DNSDriver.
+// ncProvider satisfies interfaces.IaCProvider using Namecheap resource drivers.
 type ncProvider struct {
-	driver *drivers.DNSDriver
+	dnsDriver      *drivers.DNSDriver
+	transferDriver *drivers.TransferDriver
 }
 
 func (p *ncProvider) Name() string    { return "namecheap" }
@@ -267,14 +307,19 @@ func (p *ncProvider) Initialize(_ context.Context, _ map[string]any) error {
 func (p *ncProvider) Capabilities() []interfaces.IaCCapabilityDeclaration {
 	return []interfaces.IaCCapabilityDeclaration{
 		{ResourceType: "infra.dns", Tier: 1, Operations: []string{"create", "read", "update", "delete"}},
+		{ResourceType: "infra.domain_transfer", Tier: 1, Operations: []string{"create", "read"}},
 	}
 }
 
 func (p *ncProvider) ResourceDriver(resourceType string) (interfaces.ResourceDriver, error) {
-	if resourceType != "infra.dns" {
+	switch resourceType {
+	case "", "infra.dns":
+		return p.dnsDriver, nil
+	case "infra.domain_transfer":
+		return p.transferDriver, nil
+	default:
 		return nil, fmt.Errorf("namecheap: unsupported resource type %q", resourceType)
 	}
-	return p.driver, nil
 }
 
 func (p *ncProvider) Plan(ctx context.Context, desired []interfaces.ResourceSpec, current []interfaces.ResourceState) (*interfaces.IaCPlan, error) {
