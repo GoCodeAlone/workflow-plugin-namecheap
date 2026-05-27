@@ -471,3 +471,129 @@ func containsAny(s string, subs ...string) bool {
 	}
 	return false
 }
+
+// ── EnumerateAll(infra.dns) coverage ────────────────────────────────────────
+
+func ptrString(s string) *string { return &s }
+func ptrBool(b bool) *bool       { return &b }
+func ptrInt(i int) *int          { return &i }
+
+// stubNCDomains is a multi-page fake mirroring *namecheap.DomainsService.
+// pages[N] is the response returned for page=N+1; an empty slice short-
+// circuits pagination via the "len < pageSize" rule.
+type stubNCDomains struct {
+	pages     [][]namecheap.Domain
+	calls     int
+	lastArgs  *namecheap.DomainsGetListArgs
+	returnErr error
+}
+
+func (s *stubNCDomains) GetList(args *namecheap.DomainsGetListArgs) (*namecheap.DomainsGetListCommandResponse, error) {
+	s.lastArgs = args
+	s.calls++
+	if s.returnErr != nil {
+		return nil, s.returnErr
+	}
+	idx := 0
+	if args != nil && args.Page != nil {
+		idx = *args.Page - 1
+	}
+	if idx < 0 || idx >= len(s.pages) {
+		empty := []namecheap.Domain{}
+		return &namecheap.DomainsGetListCommandResponse{Domains: &empty}, nil
+	}
+	page := s.pages[idx]
+	return &namecheap.DomainsGetListCommandResponse{Domains: &page}, nil
+}
+
+func TestNcProvider_EnumerateAll_DNS(t *testing.T) {
+	ctx := context.Background()
+	stub := &stubNCDomains{pages: [][]namecheap.Domain{{
+		{Name: ptrString("alpha.test"), IsOurDNS: ptrBool(true)},
+		{Name: ptrString("beta.test"), IsOurDNS: ptrBool(false)},
+	}}}
+	p := &ncProvider{domains: stub}
+	out, err := p.EnumerateAll(ctx, "infra.dns")
+	if err != nil {
+		t.Fatalf("EnumerateAll: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("want 2; got %d", len(out))
+	}
+	if out[0].ProviderID != "alpha.test" {
+		t.Errorf("providerID[0] = %q; want alpha.test", out[0].ProviderID)
+	}
+	if out[0].Type != "infra.dns" {
+		t.Errorf("type[0] = %q; want infra.dns", out[0].Type)
+	}
+	if out[0].Outputs["zone"] != "alpha.test" {
+		t.Errorf("zone[0] = %v", out[0].Outputs["zone"])
+	}
+	if out[0].Outputs["is_our_dns"] != true {
+		t.Errorf("is_our_dns[0] = %v; want true", out[0].Outputs["is_our_dns"])
+	}
+	if out[1].Outputs["is_our_dns"] != false {
+		t.Errorf("is_our_dns[1] = %v; want false", out[1].Outputs["is_our_dns"])
+	}
+}
+
+// TestNcProvider_EnumerateAll_DNS_paginates verifies the page=N+1 advance
+// and the "len < pageSize" terminator: page-1 returns a full page (== 100
+// items), forcing a second GetList call; page-2 returns 1 item which is
+// less than pageSize, terminating the loop.
+func TestNcProvider_EnumerateAll_DNS_paginates(t *testing.T) {
+	full := make([]namecheap.Domain, 100)
+	for i := range full {
+		full[i] = namecheap.Domain{Name: ptrString("zone" + string(rune('a'+i%26)) + ".test")}
+	}
+	stub := &stubNCDomains{pages: [][]namecheap.Domain{
+		full,
+		{{Name: ptrString("last.test")}},
+	}}
+	p := &ncProvider{domains: stub}
+	out, err := p.EnumerateAll(context.Background(), "infra.dns")
+	if err != nil {
+		t.Fatalf("EnumerateAll: %v", err)
+	}
+	if got, want := len(out), 101; got != want {
+		t.Fatalf("len(out) = %d; want %d", got, want)
+	}
+	if stub.calls != 2 {
+		t.Errorf("GetList called %d times; want 2 (pagination)", stub.calls)
+	}
+}
+
+func TestNcProvider_EnumerateAll_DNS_uninitialized(t *testing.T) {
+	p := &ncProvider{}
+	_, err := p.EnumerateAll(context.Background(), "infra.dns")
+	if err == nil {
+		t.Fatalf("want uninitialized error; got nil")
+	}
+}
+
+func TestNcProvider_EnumerateAll_DNS_unsupportedType(t *testing.T) {
+	p := &ncProvider{domains: &stubNCDomains{}}
+	_, err := p.EnumerateAll(context.Background(), "infra.compute")
+	if err == nil {
+		t.Fatalf("want unsupported-type error; got nil")
+	}
+}
+
+// TestNcProvider_EnumerateAll_DNS_skipsBlankName ensures domains with nil/empty
+// Name pointers are dropped rather than emitted with empty ProviderID — guards
+// against bogus state-store entries if the upstream API ever returns a
+// malformed Domain row.
+func TestNcProvider_EnumerateAll_DNS_skipsBlankName(t *testing.T) {
+	stub := &stubNCDomains{pages: [][]namecheap.Domain{{
+		{Name: nil},
+		{Name: ptrString("real.test")},
+	}}}
+	p := &ncProvider{domains: stub}
+	out, err := p.EnumerateAll(context.Background(), "infra.dns")
+	if err != nil {
+		t.Fatalf("EnumerateAll: %v", err)
+	}
+	if len(out) != 1 || out[0].ProviderID != "real.test" {
+		t.Fatalf("want 1 entry with ProviderID=real.test; got %+v", out)
+	}
+}

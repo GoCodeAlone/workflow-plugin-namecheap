@@ -38,18 +38,36 @@ var Version = "0.0.0"
 type ncIaCServer struct {
 	pb.UnimplementedIaCProviderRequiredServer
 	pb.UnimplementedIaCProviderFinalizerServer
+	// UnimplementedIaCProviderEnumeratorServer provides the EnumerateByTag
+	// fallback (returns Unimplemented at the gRPC layer) and satisfies the
+	// codegen mustEmbed forward-compat requirement. EnumerateAll is overridden
+	// below so the SDK auto-registers IaCProviderEnumerator at plugin startup
+	// for the `infra.dns` enumeration path.
+	pb.UnimplementedIaCProviderEnumeratorServer
 
 	// drivers are populated by Initialize.
 	dnsDriver      *drivers.DNSDriver
 	transferDriver *drivers.TransferDriver
+	// domains lists the account's domains for EnumerateAll. Populated by
+	// Initialize from client.Domains. Kept as an interface so tests can
+	// inject a fake without spinning up the real namecheap SDK client.
+	domains domainsLister
 	// cfg is the last-applied provider config.
 	cfg Config
 }
 
+// domainsLister is the minimal subset of namecheap.DomainsService that
+// EnumerateAll exercises. *namecheap.DomainsService satisfies this
+// structurally; the test fake stubNCDomains satisfies it the same way.
+type domainsLister interface {
+	GetList(args *namecheap.DomainsGetListArgs) (*namecheap.DomainsGetListCommandResponse, error)
+}
+
 // Compile-time interface assertions.
 var (
-	_ pb.IaCProviderRequiredServer  = (*ncIaCServer)(nil)
-	_ pb.IaCProviderFinalizerServer = (*ncIaCServer)(nil)
+	_ pb.IaCProviderRequiredServer   = (*ncIaCServer)(nil)
+	_ pb.IaCProviderFinalizerServer  = (*ncIaCServer)(nil)
+	_ pb.IaCProviderEnumeratorServer = (*ncIaCServer)(nil)
 )
 
 // NewIaCServer constructs an uninitialised ncIaCServer ready for
@@ -114,6 +132,7 @@ func (s *ncIaCServer) Initialize(_ context.Context, req *pb.InitializeRequest) (
 	})
 	s.dnsDriver = drivers.NewDNSDriver(client)
 	s.transferDriver = drivers.NewTransferDriver(client)
+	s.domains = client.Domains
 	return &pb.InitializeResponse{}, nil
 }
 
@@ -130,7 +149,7 @@ func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRe
 	if err != nil {
 		return nil, fmt.Errorf("namecheap iacserver: decode Plan current: %w", err)
 	}
-	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver}
+	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver, domains: s.domains}
 	plan, err := platform.ComputePlan(ctx, p, desired, current)
 	if err != nil {
 		return nil, err
@@ -301,6 +320,10 @@ func (s *ncIaCServer) FinalizeApply(_ context.Context, _ *pb.FinalizeApplyReques
 type ncProvider struct {
 	dnsDriver      *drivers.DNSDriver
 	transferDriver *drivers.TransferDriver
+	// domains lists the account's domains for EnumerateAll("infra.dns").
+	// May be nil for code paths that don't touch enumeration (legacy
+	// Plan/Apply paths in tests).
+	domains domainsLister
 }
 
 func (p *ncProvider) Name() string    { return "namecheap" }
