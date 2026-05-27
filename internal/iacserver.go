@@ -38,18 +38,36 @@ var Version = "0.0.0"
 type ncIaCServer struct {
 	pb.UnimplementedIaCProviderRequiredServer
 	pb.UnimplementedIaCProviderFinalizerServer
+	// UnimplementedIaCProviderEnumeratorServer provides the EnumerateByTag
+	// fallback (returns Unimplemented at the gRPC layer) and satisfies the
+	// codegen mustEmbed forward-compat requirement. EnumerateAll is overridden
+	// below so the SDK auto-registers IaCProviderEnumerator at plugin startup
+	// for the `infra.dns` enumeration path.
+	pb.UnimplementedIaCProviderEnumeratorServer
 
 	// drivers are populated by Initialize.
 	dnsDriver      *drivers.DNSDriver
 	transferDriver *drivers.TransferDriver
+	// domains lists the account's domains for EnumerateAll. Populated by
+	// Initialize from client.Domains. Kept as an interface so tests can
+	// inject a fake without spinning up the real namecheap SDK client.
+	domains domainsLister
 	// cfg is the last-applied provider config.
 	cfg Config
 }
 
+// domainsLister is the minimal subset of namecheap.DomainsService that
+// EnumerateAll exercises. *namecheap.DomainsService satisfies this
+// structurally; the test fake stubNCDomains satisfies it the same way.
+type domainsLister interface {
+	GetList(args *namecheap.DomainsGetListArgs) (*namecheap.DomainsGetListCommandResponse, error)
+}
+
 // Compile-time interface assertions.
 var (
-	_ pb.IaCProviderRequiredServer  = (*ncIaCServer)(nil)
-	_ pb.IaCProviderFinalizerServer = (*ncIaCServer)(nil)
+	_ pb.IaCProviderRequiredServer   = (*ncIaCServer)(nil)
+	_ pb.IaCProviderFinalizerServer  = (*ncIaCServer)(nil)
+	_ pb.IaCProviderEnumeratorServer = (*ncIaCServer)(nil)
 )
 
 // NewIaCServer constructs an uninitialised ncIaCServer ready for
@@ -114,6 +132,7 @@ func (s *ncIaCServer) Initialize(_ context.Context, req *pb.InitializeRequest) (
 	})
 	s.dnsDriver = drivers.NewDNSDriver(client)
 	s.transferDriver = drivers.NewTransferDriver(client)
+	s.domains = client.Domains
 	return &pb.InitializeResponse{}, nil
 }
 
@@ -130,7 +149,7 @@ func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRe
 	if err != nil {
 		return nil, fmt.Errorf("namecheap iacserver: decode Plan current: %w", err)
 	}
-	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver}
+	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver, domains: s.domains}
 	plan, err := platform.ComputePlan(ctx, p, desired, current)
 	if err != nil {
 		return nil, err
@@ -295,12 +314,54 @@ func (s *ncIaCServer) FinalizeApply(_ context.Context, _ *pb.FinalizeApplyReques
 	return &pb.FinalizeApplyResponse{}, nil
 }
 
+// EnumerateAll satisfies pb.IaCProviderEnumeratorServer.EnumerateAll. Mirrors
+// the Go-level interfaces.EnumeratorAll on *ncProvider so the wfctl
+// `infra import-all` path can paginate the account's domains in one
+// account-level round-trip per page.
+func (s *ncIaCServer) EnumerateAll(ctx context.Context, req *pb.EnumerateAllRequest) (*pb.EnumerateAllResponse, error) {
+	if s.domains == nil {
+		return nil, fmt.Errorf("namecheap iacserver: EnumerateAll called before Initialize")
+	}
+	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver, domains: s.domains}
+	outs, err := p.EnumerateAll(ctx, req.GetResourceType())
+	if err != nil {
+		return nil, err
+	}
+	pbOuts := make([]*pb.ResourceOutput, 0, len(outs))
+	for _, o := range outs {
+		if o == nil {
+			continue
+		}
+		outputsJSON, err := json.Marshal(o.Outputs)
+		if err != nil {
+			return nil, fmt.Errorf("namecheap iacserver: encode EnumerateAll outputs: %w", err)
+		}
+		sensitive := make(map[string]bool, len(o.Sensitive))
+		for k, v := range o.Sensitive {
+			sensitive[k] = v
+		}
+		pbOuts = append(pbOuts, &pb.ResourceOutput{
+			Name:        o.Name,
+			Type:        o.Type,
+			ProviderId:  o.ProviderID,
+			OutputsJson: outputsJSON,
+			Sensitive:   sensitive,
+			Status:      o.Status,
+		})
+	}
+	return &pb.EnumerateAllResponse{Outputs: pbOuts}, nil
+}
+
 // ---- ncProvider bridges ncIaCServer → interfaces.IaCProvider for platform.ComputePlan ----
 
 // ncProvider satisfies interfaces.IaCProvider using Namecheap resource drivers.
 type ncProvider struct {
 	dnsDriver      *drivers.DNSDriver
 	transferDriver *drivers.TransferDriver
+	// domains lists the account's domains for EnumerateAll("infra.dns").
+	// May be nil for code paths that don't touch enumeration (legacy
+	// Plan/Apply paths in tests).
+	domains domainsLister
 }
 
 func (p *ncProvider) Name() string    { return "namecheap" }
@@ -386,6 +447,64 @@ func (p *ncProvider) BootstrapStateBackend(_ context.Context, _ map[string]any) 
 }
 
 func (p *ncProvider) Close() error { return nil }
+
+// EnumerateAll implements interfaces.EnumeratorAll for resource type
+// "infra.dns". Pages the account's domains via the injected domainsLister
+// (production wraps namecheap.Client.Domains). Per-zone Outputs surface
+// is_our_dns + expires so operators can identify zones registered at NC
+// but with authority pointed elsewhere.
+//
+// The namecheap SDK's GetList does NOT accept a context. The ctx argument
+// is preserved purely for interfaces.EnumeratorAll signature parity; if a
+// future SDK version adds context support, switch to the typed variant.
+func (p *ncProvider) EnumerateAll(ctx context.Context, resourceType string) ([]*interfaces.ResourceOutput, error) {
+	_ = ctx
+	if p.domains == nil {
+		return nil, fmt.Errorf("namecheap: EnumerateAll called on provider that is not initialized — call Initialize first")
+	}
+	if resourceType != "infra.dns" {
+		return nil, fmt.Errorf("namecheap: EnumerateAll: resource type %q not supported", resourceType)
+	}
+	var out []*interfaces.ResourceOutput
+	page := 1
+	pageSize := 100
+	for {
+		resp, err := p.domains.GetList(&namecheap.DomainsGetListArgs{Page: &page, PageSize: &pageSize})
+		if err != nil {
+			return nil, fmt.Errorf("namecheap: EnumerateAll infra.dns: page=%d: %w", page, err)
+		}
+		if resp == nil || resp.Domains == nil || len(*resp.Domains) == 0 {
+			break
+		}
+		batch := *resp.Domains
+		for _, d := range batch {
+			var name string
+			if d.Name != nil {
+				name = *d.Name
+			}
+			if name == "" {
+				continue
+			}
+			outputs := map[string]any{"zone": name}
+			if d.IsOurDNS != nil {
+				outputs["is_our_dns"] = *d.IsOurDNS
+			}
+			if d.Expires != nil {
+				outputs["expires"] = d.Expires.Format(time.RFC3339)
+			}
+			out = append(out, &interfaces.ResourceOutput{
+				ProviderID: name,
+				Type:       "infra.dns",
+				Outputs:    outputs,
+			})
+		}
+		if len(batch) < pageSize {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
 
 // ---- Marshalling helpers (pb ↔ Go) ----
 // These mirror the helpers in workflow-plugin-digitalocean/internal/iacserver.go.
