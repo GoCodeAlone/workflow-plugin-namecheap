@@ -597,3 +597,50 @@ func TestNcProvider_EnumerateAll_DNS_skipsBlankName(t *testing.T) {
 		t.Fatalf("want 1 entry with ProviderID=real.test; got %+v", out)
 	}
 }
+
+// TestNcIaCServer_EnumerateAll_DNS exercises the typed gRPC surface
+// (ncIaCServer.EnumerateAll). The SDK auto-registers this service at
+// plugin startup because ncIaCServer satisfies pb.IaCProviderEnumeratorServer;
+// this test confirms the proto<->Go marshalling on the EnumerateAll path
+// is correct (outputs_json round-trips zone + is_our_dns).
+func TestNcIaCServer_EnumerateAll_DNS(t *testing.T) {
+	srv := &ncIaCServer{
+		domains: &stubNCDomains{pages: [][]namecheap.Domain{{
+			{Name: ptrString("alpha.test"), IsOurDNS: ptrBool(true)},
+			{Name: ptrString("beta.test"), IsOurDNS: ptrBool(false)},
+		}}},
+	}
+	resp, err := srv.EnumerateAll(context.Background(), &pb.EnumerateAllRequest{ResourceType: "infra.dns"})
+	if err != nil {
+		t.Fatalf("EnumerateAll: %v", err)
+	}
+	if len(resp.GetOutputs()) != 2 {
+		t.Fatalf("want 2 outputs; got %d", len(resp.GetOutputs()))
+	}
+	first := resp.GetOutputs()[0]
+	if first.GetProviderId() != "alpha.test" {
+		t.Errorf("providerID = %q; want alpha.test", first.GetProviderId())
+	}
+	if first.GetType() != "infra.dns" {
+		t.Errorf("type = %q; want infra.dns", first.GetType())
+	}
+	var outputs map[string]any
+	if err := json.Unmarshal(first.GetOutputsJson(), &outputs); err != nil {
+		t.Fatalf("unmarshal outputs: %v", err)
+	}
+	if outputs["zone"] != "alpha.test" || outputs["is_our_dns"] != true {
+		t.Errorf("outputs = %#v", outputs)
+	}
+}
+
+func TestNcIaCServer_EnumerateAll_BeforeInitialize(t *testing.T) {
+	srv := &ncIaCServer{}
+	_, err := srv.EnumerateAll(context.Background(), &pb.EnumerateAllRequest{ResourceType: "infra.dns"})
+	if err == nil {
+		t.Fatalf("want before-Initialize error; got nil")
+	}
+}
+
+// ptrInt is a no-op helper kept for symmetry with ptrString/ptrBool in case
+// future tests need to wire DomainsGetListArgs values directly.
+var _ = ptrInt
