@@ -1,6 +1,6 @@
 {
   "name": "workflow-plugin-namecheap",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Namecheap DNS and domain-transfer provider for workflow IaC",
   "author": "GoCodeAlone",
   "license": "MIT",
@@ -41,61 +41,97 @@
     {
       "name": "NAMECHEAP_API_KEY",
       "sensitive": true,
-      "description": "Namecheap API key (rotate via Profile → Tools → Namecheap API Access)",
+      "description": "Namecheap API key (rotate via Profile \u2192 Tools \u2192 Namecheap API Access)",
       "prompt": "Namecheap API key"
+    }
+  ],
+  "secret_targets": [
+    {
+      "provider": "github",
+      "scopes": [
+        "repo",
+        "env",
+        "org"
+      ],
+      "description": "Stored as GitHub Actions secrets when workflows run on GitHub."
     },
     {
+      "provider": "gitlab",
+      "scopes": [
+        "project",
+        "group"
+      ],
+      "description": "Stored as GitLab CI/CD variables when workflows run on GitLab; variables may also be narrowed with GitLab's separate environment_scope field."
+    },
+    {
+      "provider": "vault",
+      "scopes": [
+        "mount"
+      ],
+      "description": "Stored in Vault for application/runtime retrieval."
+    },
+    {
+      "provider": "file",
+      "scopes": [
+        "directory"
+      ],
+      "description": "Stored in a local file-backed secret store."
+    },
+    {
+      "provider": "keychain",
+      "scopes": [
+        "service"
+      ],
+      "description": "Stored in the local OS keychain."
+    },
+    {
+      "provider": "env",
+      "scopes": [
+        "process"
+      ],
+      "description": "Provided by the local process environment."
+    }
+  ],
+  "required_config": [
+    {
       "name": "NAMECHEAP_CLIENT_IP",
+      "key": "client_ip",
       "sensitive": false,
       "description": "Non-secret public IP sent as Namecheap ClientIp on every API request; it must already be allowlisted in the Namecheap control panel.",
       "prompt": "Public IP already allowlisted in Namecheap (CIDR not supported)"
     }
   ],
-  "secret_targets": [
-      {
-        "provider": "github",
-        "scopes": [
-          "repo",
-          "env",
-          "org"
-        ],
-        "description": "Stored as GitHub Actions secrets when workflows run on GitHub."
-      },
-      {
-        "provider": "gitlab",
-        "scopes": [
-          "project",
-          "group"
-        ],
-        "description": "Stored as GitLab CI/CD variables when workflows run on GitLab; variables may also be narrowed with GitLab's separate environment_scope field."
-      },
-      {
-        "provider": "vault",
-        "scopes": [
-          "mount"
-        ],
-        "description": "Stored in Vault for application/runtime retrieval."
-      },
-      {
-        "provider": "file",
-        "scopes": [
-          "directory"
-        ],
-        "description": "Stored in a local file-backed secret store."
-      },
-      {
-        "provider": "keychain",
-        "scopes": [
-          "service"
-        ],
-        "description": "Stored in the local OS keychain."
-      },
-      {
-        "provider": "env",
-        "scopes": [
-          "process"
-        ],
-        "description": "Provided by the local process environment."
-      }
-    ]
+  "config_targets": [
+    {
+      "provider": "github",
+      "scopes": [
+        "repo",
+        "env",
+        "org"
+      ],
+      "description": "Stored as GitHub Actions variables when workflows run on GitHub."
+    },
+    {
+      "provider": "gitlab",
+      "scopes": [
+        "project",
+        "group"
+      ],
+      "description": "Stored as GitLab CI/CD variables when workflows run on GitLab; variables may also be narrowed with GitLab environment_scope."
+    },
+    {
+      "provider": "file",
+      "scopes": [
+        "directory"
+      ],
+      "description": "Stored in a local dotenv/config file for local workflows."
+    },
+    {
+      "provider": "env",
+      "scopes": [
+        "process"
+      ],
+      "description": "Provided by the local process environment."
+    }
+  ]
 }

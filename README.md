@@ -79,7 +79,12 @@ existing transfer's status.
 |------|-----------|--------|
 | `NAMECHEAP_API_USER` | no | Namecheap account username (= ApiUser in the API) |
 | `NAMECHEAP_API_KEY` | **yes** | Profile → Tools → Namecheap API Access |
-| `NAMECHEAP_CLIENT_IP` | no | Public IP sent as Namecheap `ClientIp` — must already be allowlisted in the same control panel |
+
+## Required configuration
+
+| Name | Sensitive | Source |
+|------|-----------|--------|
+| `NAMECHEAP_CLIENT_IP` | no | Public IP sent as Namecheap `ClientIp`; must already be allowlisted in the same control panel |
 
 `NAMECHEAP_CLIENT_IP` is intentionally non-sensitive, but it is still required.
 Namecheap requires every API request to include the caller's public `ClientIp`
@@ -89,6 +94,7 @@ value in Workflow provider config.
 
 ```sh
 wfctl secrets setup --plugin workflow-plugin-namecheap
+wfctl vars setup --plugin workflow-plugin-namecheap
 ```
 
 ## Supported record types
