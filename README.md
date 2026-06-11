@@ -79,7 +79,13 @@ existing transfer's status.
 |------|-----------|--------|
 | `NAMECHEAP_API_USER` | no | Namecheap account username (= ApiUser in the API) |
 | `NAMECHEAP_API_KEY` | **yes** | Profile → Tools → Namecheap API Access |
-| `NAMECHEAP_CLIENT_IP` | no | Public IP of the wfctl runner — must be allowlisted at the same control panel |
+| `NAMECHEAP_CLIENT_IP` | no | Public IP sent as Namecheap `ClientIp` — must already be allowlisted in the same control panel |
+
+`NAMECHEAP_CLIENT_IP` is intentionally non-sensitive, but it is still required.
+Namecheap requires every API request to include the caller's public `ClientIp`
+and rejects requests unless that IP also appears in the account API allowlist.
+Entering the IP in the Namecheap UI does not remove the need to pass the same
+value in Workflow provider config.
 
 ```sh
 wfctl secrets setup --plugin workflow-plugin-namecheap
@@ -89,6 +95,26 @@ wfctl secrets setup --plugin workflow-plugin-namecheap
 
 `A`, `AAAA`, `ALIAS`, `CAA`, `CNAME`, `MX`, `MXE`, `NS`, `TXT`,
 `URL`, `URL301`, `FRAME`
+
+## Go Integration Notes
+
+The runtime entrypoint is `cmd/workflow-plugin-namecheap`, which serves
+`internal.NewIaCServer` through Workflow's external plugin host. Application code
+usually references this plugin from a Workflow manifest with
+`iac.provider.namecheap`; direct Go imports are mainly useful for provider
+tests.
+
+The production implementation uses
+`github.com/namecheap/go-namecheap-sdk/v2`. DNS tests can exercise the provider
+without live credentials by using the narrow fakeable interfaces in
+`internal/drivers`. Live tests require `NAMECHEAP_API_USER`,
+`NAMECHEAP_API_KEY`, and `NAMECHEAP_CLIENT_IP`, where `NAMECHEAP_CLIENT_IP`
+matches the public IP allowlisted in the Namecheap account.
+
+`infra.dns` uses Namecheap's whole-zone `SetHosts` API. The desired records in
+Workflow become the complete host-record set for the domain.
+`infra.domain_transfer` uses Namecheap transfer APIs and keeps EPP/auth codes
+out of state outputs.
 
 ## Multi-domain accounts
 

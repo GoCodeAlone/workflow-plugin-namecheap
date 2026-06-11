@@ -1,7 +1,3 @@
-// Package internal — Namecheap DNS driver implementation.
-//
-// Translates workflow IaC infra.dns resources into Namecheap API
-// calls via the official namecheap/go-namecheap-sdk client.
 package internal
 
 import (

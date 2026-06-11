@@ -1,6 +1,6 @@
 {
   "name": "workflow-plugin-namecheap",
-  "version": "0.1.4",
+  "version": "0.1.7",
   "description": "Namecheap DNS and domain-transfer provider for workflow IaC",
   "author": "GoCodeAlone",
   "license": "MIT",
@@ -47,11 +47,11 @@
     {
       "name": "NAMECHEAP_CLIENT_IP",
       "sensitive": false,
-      "description": "Public IP of the wfctl runner, whitelisted at api.namecheap.com",
-      "prompt": "Public IP to whitelist (CIDR not supported)"
+      "description": "Non-secret public IP sent as Namecheap ClientIp on every API request; it must already be allowlisted in the Namecheap control panel.",
+      "prompt": "Public IP already allowlisted in Namecheap (CIDR not supported)"
     }
   ],
-    "secret_targets": [
+  "secret_targets": [
       {
         "provider": "github",
         "scopes": [
@@ -65,10 +65,9 @@
         "provider": "gitlab",
         "scopes": [
           "project",
-          "group",
-          "env"
+          "group"
         ],
-        "description": "Stored as GitLab CI/CD variables when workflows run on GitLab."
+        "description": "Stored as GitLab CI/CD variables when workflows run on GitLab; variables may also be narrowed with GitLab's separate environment_scope field."
       },
       {
         "provider": "vault",
