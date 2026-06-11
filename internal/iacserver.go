@@ -1,18 +1,3 @@
-// Package internal — typed pb.IaCProvider*Server for workflow-plugin-namecheap.
-//
-// Implements the minimum required typed IaC gRPC surface for infra.dns:
-//   - pb.IaCProviderRequiredServer (Name, Version, Capabilities, Initialize,
-//     Plan, Destroy, Status, Import, ResolveSizing, BootstrapStateBackend).
-//   - pb.IaCProviderFinalizerServer (FinalizeApply — no-op for DNS).
-//
-// ComputePlanVersion is "v2" per the force-cutover mandate (ADR 0024 /
-// workflow#699). Plugins that do not declare v2 are permanently rejected
-// by wfctl v0.54.0+.
-//
-// Config crosses the gRPC boundary as JSON bytes (config_json field).
-// No structpb.Struct, no Any.UnmarshalTo on the wire — per the strict-
-// contracts hard invariant documented in workflow-plugin-digitalocean's
-// iacserver.go.
 package internal
 
 import (
