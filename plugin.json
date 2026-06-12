@@ -1,6 +1,6 @@
 {
   "name": "workflow-plugin-namecheap",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Namecheap DNS and domain-transfer provider for workflow IaC",
   "author": "GoCodeAlone",
   "license": "MIT",
