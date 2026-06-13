@@ -26,7 +26,14 @@
     "resourceTypes": [
       "infra.dns",
       "infra.domain_transfer"
-    ]
+    ],
+    "iacProvider": {
+      "name": "namecheap",
+      "resourceTypes": [
+        "infra.dns",
+        "infra.domain_transfer"
+      ]
+    }
   },
   "iacProvider": {
     "computePlanVersion": "v2"
