@@ -1,6 +1,6 @@
 {
   "name": "workflow-plugin-namecheap",
-  "version": "0.1.9",
+  "version": "0.0.0",
   "description": "Namecheap DNS and domain-transfer provider for workflow IaC",
   "author": "GoCodeAlone",
   "license": "MIT",
@@ -31,13 +31,29 @@
   "iacProvider": {
     "computePlanVersion": "v2"
   },
-  "required_secrets": [
+  "downloads": [
     {
-      "name": "NAMECHEAP_API_USER",
-      "sensitive": false,
-      "description": "Namecheap account username (also the ApiUser per Namecheap API)",
-      "prompt": "Namecheap username"
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://github.com/GoCodeAlone/workflow-plugin-namecheap/releases/download/v0.0.0/workflow-plugin-namecheap-linux-amd64.tar.gz"
     },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "url": "https://github.com/GoCodeAlone/workflow-plugin-namecheap/releases/download/v0.0.0/workflow-plugin-namecheap-linux-arm64.tar.gz"
+    },
+    {
+      "os": "darwin",
+      "arch": "amd64",
+      "url": "https://github.com/GoCodeAlone/workflow-plugin-namecheap/releases/download/v0.0.0/workflow-plugin-namecheap-darwin-amd64.tar.gz"
+    },
+    {
+      "os": "darwin",
+      "arch": "arm64",
+      "url": "https://github.com/GoCodeAlone/workflow-plugin-namecheap/releases/download/v0.0.0/workflow-plugin-namecheap-darwin-arm64.tar.gz"
+    }
+  ],
+  "required_secrets": [
     {
       "name": "NAMECHEAP_API_KEY",
       "sensitive": true,
@@ -93,6 +109,13 @@
     }
   ],
   "required_config": [
+    {
+      "name": "NAMECHEAP_API_USER",
+      "key": "api_user",
+      "sensitive": false,
+      "description": "Namecheap account username (also the ApiUser per Namecheap API)",
+      "prompt": "Namecheap username"
+    },
     {
       "name": "NAMECHEAP_CLIENT_IP",
       "key": "client_ip",
