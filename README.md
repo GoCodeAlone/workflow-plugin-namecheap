@@ -77,13 +77,13 @@ existing transfer's status.
 
 | Name | Sensitive | Source |
 |------|-----------|--------|
-| `NAMECHEAP_API_USER` | no | Namecheap account username (= ApiUser in the API) |
 | `NAMECHEAP_API_KEY` | **yes** | Profile → Tools → Namecheap API Access |
 
 ## Required configuration
 
 | Name | Sensitive | Source |
 |------|-----------|--------|
+| `NAMECHEAP_API_USER` | no | Namecheap account username (= ApiUser in the API) |
 | `NAMECHEAP_CLIENT_IP` | no | Public IP sent as Namecheap `ClientIp`; must already be allowlisted in the same control panel |
 
 `NAMECHEAP_CLIENT_IP` is intentionally non-sensitive, but it is still required.
