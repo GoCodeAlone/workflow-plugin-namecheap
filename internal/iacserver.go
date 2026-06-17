@@ -496,6 +496,9 @@ func (p *ncProvider) EnumerateAll(ctx context.Context, resourceType string) ([]*
 				out = append(out, delegation)
 				continue
 			}
+			if d.IsOurDNS != nil && !*d.IsOurDNS {
+				continue
+			}
 			outputs := map[string]any{"zone": name}
 			if d.IsOurDNS != nil {
 				outputs["is_our_dns"] = *d.IsOurDNS
