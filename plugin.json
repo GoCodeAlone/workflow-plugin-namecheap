@@ -13,7 +13,8 @@
     "namecheap",
     "iac",
     "infra.dns",
-    "infra.domain_transfer"
+    "infra.domain_transfer",
+    "infra.dns_delegation"
   ],
   "homepage": "https://github.com/GoCodeAlone/workflow-plugin-namecheap",
   "repository": "https://github.com/GoCodeAlone/workflow-plugin-namecheap",
@@ -25,13 +26,15 @@
     "triggerTypes": [],
     "resourceTypes": [
       "infra.dns",
-      "infra.domain_transfer"
+      "infra.domain_transfer",
+      "infra.dns_delegation"
     ],
     "iacProvider": {
       "name": "namecheap",
       "resourceTypes": [
         "infra.dns",
-        "infra.domain_transfer"
+        "infra.domain_transfer",
+        "infra.dns_delegation"
       ]
     }
   },

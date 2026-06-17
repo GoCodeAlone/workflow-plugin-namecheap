@@ -18,7 +18,7 @@ func TestEmbeddedPluginManifestMatchesRoot(t *testing.T) {
 
 func TestManifestDeclaresIaCProviderCapability(t *testing.T) {
 	manifest := readPluginManifest(t, "plugin.json")
-	assertIaCProviderCapability(t, manifest, "namecheap", []string{"infra.dns", "infra.domain_transfer"})
+	assertIaCProviderCapability(t, manifest, "namecheap", []string{"infra.dns", "infra.domain_transfer", "infra.dns_delegation"})
 }
 
 type pluginManifest struct {
