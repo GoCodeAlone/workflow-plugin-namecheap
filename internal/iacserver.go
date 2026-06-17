@@ -450,9 +450,10 @@ func (p *ncProvider) Close() error { return nil }
 
 // EnumerateAll implements interfaces.EnumeratorAll for resource types
 // "infra.dns" and "infra.dns_delegation". Pages the account's domains via the injected domainsLister
-// (production wraps namecheap.Client.Domains). Per-zone Outputs surface
-// is_our_dns + expires so operators can identify zones registered at NC
-// but with authority pointed elsewhere.
+// (production wraps namecheap.Client.Domains). Hosted DNS enumeration
+// intentionally returns only domains currently using Namecheap DNS; domains
+// delegated elsewhere are still returned by infra.dns_delegation so registrar
+// nameservers remain visible without triggering hosted-DNS GetHosts failures.
 //
 // The namecheap SDK's GetList does NOT accept a context. The ctx argument
 // is preserved purely for interfaces.EnumeratorAll signature parity; if a
