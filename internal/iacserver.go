@@ -31,8 +31,9 @@ type ncIaCServer struct {
 	pb.UnimplementedIaCProviderEnumeratorServer
 
 	// drivers are populated by Initialize.
-	dnsDriver      *drivers.DNSDriver
-	transferDriver *drivers.TransferDriver
+	dnsDriver        *drivers.DNSDriver
+	delegationDriver *drivers.DelegationDriver
+	transferDriver   *drivers.TransferDriver
 	// domains lists the account's domains for EnumerateAll. Populated by
 	// Initialize from client.Domains. Kept as an interface so tests can
 	// inject a fake without spinning up the real namecheap SDK client.
@@ -84,6 +85,11 @@ func (s *ncIaCServer) Capabilities(_ context.Context, _ *pb.CapabilitiesRequest)
 				Tier:         1,
 				Operations:   []string{"create", "read"},
 			},
+			{
+				ResourceType: "infra.dns_delegation",
+				Tier:         1,
+				Operations:   []string{"create", "read", "update"},
+			},
 		},
 		ComputePlanVersion: "v2",
 	}, nil
@@ -116,6 +122,7 @@ func (s *ncIaCServer) Initialize(_ context.Context, req *pb.InitializeRequest) (
 		UseSandbox: cfg.Sandbox,
 	})
 	s.dnsDriver = drivers.NewDNSDriver(client)
+	s.delegationDriver = drivers.NewDelegationDriver(client)
 	s.transferDriver = drivers.NewTransferDriver(client)
 	s.domains = client.Domains
 	return &pb.InitializeResponse{}, nil
@@ -123,7 +130,7 @@ func (s *ncIaCServer) Initialize(_ context.Context, req *pb.InitializeRequest) (
 
 // Plan computes the desired → current diff via platform.ComputePlan.
 func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanResponse, error) {
-	if s.dnsDriver == nil || s.transferDriver == nil {
+	if s.dnsDriver == nil || s.delegationDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Plan called before Initialize")
 	}
 	desired, err := specsFromPBNC(req.GetDesired())
@@ -134,7 +141,7 @@ func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRe
 	if err != nil {
 		return nil, fmt.Errorf("namecheap iacserver: decode Plan current: %w", err)
 	}
-	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver, domains: s.domains}
+	p := &ncProvider{dnsDriver: s.dnsDriver, delegationDriver: s.delegationDriver, transferDriver: s.transferDriver, domains: s.domains}
 	plan, err := platform.ComputePlan(ctx, p, desired, current)
 	if err != nil {
 		return nil, err
@@ -148,7 +155,7 @@ func (s *ncIaCServer) Plan(ctx context.Context, req *pb.PlanRequest) (*pb.PlanRe
 
 // Destroy deletes every listed resource by clearing its DNS records.
 func (s *ncIaCServer) Destroy(ctx context.Context, req *pb.DestroyRequest) (*pb.DestroyResponse, error) {
-	if s.dnsDriver == nil || s.transferDriver == nil {
+	if s.dnsDriver == nil || s.delegationDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Destroy called before Initialize")
 	}
 	refs := refsFromPBNC(req.GetRefs())
@@ -175,7 +182,7 @@ func (s *ncIaCServer) Destroy(ctx context.Context, req *pb.DestroyRequest) (*pb.
 
 // Status returns the live status of the requested resources.
 func (s *ncIaCServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
-	if s.dnsDriver == nil || s.transferDriver == nil {
+	if s.dnsDriver == nil || s.delegationDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Status called before Initialize")
 	}
 	refs := refsFromPBNC(req.GetRefs())
@@ -227,7 +234,7 @@ func (s *ncIaCServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.St
 
 // Import imports a domain's DNS state into IaC state.
 func (s *ncIaCServer) Import(ctx context.Context, req *pb.ImportRequest) (*pb.ImportResponse, error) {
-	if s.dnsDriver == nil || s.transferDriver == nil {
+	if s.dnsDriver == nil || s.delegationDriver == nil || s.transferDriver == nil {
 		return nil, fmt.Errorf("namecheap iacserver: Import called before Initialize")
 	}
 	resourceType := req.GetResourceType()
@@ -277,6 +284,8 @@ func (s *ncIaCServer) resourceDriver(resourceType string) (interfaces.ResourceDr
 	switch resourceType {
 	case "", "infra.dns":
 		return s.dnsDriver, nil
+	case "infra.dns_delegation":
+		return s.delegationDriver, nil
 	case "infra.domain_transfer":
 		return s.transferDriver, nil
 	default:
@@ -307,7 +316,7 @@ func (s *ncIaCServer) EnumerateAll(ctx context.Context, req *pb.EnumerateAllRequ
 	if s.domains == nil {
 		return nil, fmt.Errorf("namecheap iacserver: EnumerateAll called before Initialize")
 	}
-	p := &ncProvider{dnsDriver: s.dnsDriver, transferDriver: s.transferDriver, domains: s.domains}
+	p := &ncProvider{dnsDriver: s.dnsDriver, delegationDriver: s.delegationDriver, transferDriver: s.transferDriver, domains: s.domains}
 	outs, err := p.EnumerateAll(ctx, req.GetResourceType())
 	if err != nil {
 		return nil, err
@@ -341,8 +350,9 @@ func (s *ncIaCServer) EnumerateAll(ctx context.Context, req *pb.EnumerateAllRequ
 
 // ncProvider satisfies interfaces.IaCProvider using Namecheap resource drivers.
 type ncProvider struct {
-	dnsDriver      *drivers.DNSDriver
-	transferDriver *drivers.TransferDriver
+	dnsDriver        *drivers.DNSDriver
+	delegationDriver *drivers.DelegationDriver
+	transferDriver   *drivers.TransferDriver
 	// domains lists the account's domains for EnumerateAll("infra.dns").
 	// May be nil for code paths that don't touch enumeration (legacy
 	// Plan/Apply paths in tests).
@@ -360,6 +370,7 @@ func (p *ncProvider) Initialize(_ context.Context, _ map[string]any) error {
 func (p *ncProvider) Capabilities() []interfaces.IaCCapabilityDeclaration {
 	return []interfaces.IaCCapabilityDeclaration{
 		{ResourceType: "infra.dns", Tier: 1, Operations: []string{"create", "read", "update", "delete"}},
+		{ResourceType: "infra.dns_delegation", Tier: 1, Operations: []string{"create", "read", "update"}},
 		{ResourceType: "infra.domain_transfer", Tier: 1, Operations: []string{"create", "read"}},
 	}
 }
@@ -368,6 +379,8 @@ func (p *ncProvider) ResourceDriver(resourceType string) (interfaces.ResourceDri
 	switch resourceType {
 	case "", "infra.dns":
 		return p.dnsDriver, nil
+	case "infra.dns_delegation":
+		return p.delegationDriver, nil
 	case "infra.domain_transfer":
 		return p.transferDriver, nil
 	default:
@@ -433,8 +446,8 @@ func (p *ncProvider) BootstrapStateBackend(_ context.Context, _ map[string]any) 
 
 func (p *ncProvider) Close() error { return nil }
 
-// EnumerateAll implements interfaces.EnumeratorAll for resource type
-// "infra.dns". Pages the account's domains via the injected domainsLister
+// EnumerateAll implements interfaces.EnumeratorAll for resource types
+// "infra.dns" and "infra.dns_delegation". Pages the account's domains via the injected domainsLister
 // (production wraps namecheap.Client.Domains). Per-zone Outputs surface
 // is_our_dns + expires so operators can identify zones registered at NC
 // but with authority pointed elsewhere.
@@ -447,7 +460,7 @@ func (p *ncProvider) EnumerateAll(ctx context.Context, resourceType string) ([]*
 	if p.domains == nil {
 		return nil, fmt.Errorf("namecheap: EnumerateAll called on provider that is not initialized — call Initialize first")
 	}
-	if resourceType != "infra.dns" {
+	if resourceType != "infra.dns" && resourceType != "infra.dns_delegation" {
 		return nil, fmt.Errorf("namecheap: EnumerateAll: resource type %q not supported", resourceType)
 	}
 	var out []*interfaces.ResourceOutput
@@ -468,6 +481,17 @@ func (p *ncProvider) EnumerateAll(ctx context.Context, resourceType string) ([]*
 				name = *d.Name
 			}
 			if name == "" {
+				continue
+			}
+			if resourceType == "infra.dns_delegation" {
+				if p.delegationDriver == nil {
+					return nil, fmt.Errorf("namecheap: EnumerateAll infra.dns_delegation requires delegation driver")
+				}
+				delegation, err := p.delegationDriver.Read(ctx, interfaces.ResourceRef{Name: name, Type: "infra.dns_delegation", ProviderID: name})
+				if err != nil {
+					return nil, fmt.Errorf("namecheap: EnumerateAll infra.dns_delegation %s: %w", name, err)
+				}
+				out = append(out, delegation)
 				continue
 			}
 			outputs := map[string]any{"zone": name}
@@ -835,6 +859,9 @@ func importedAppliedConfigNC(resourceType string, outputs map[string]any) map[st
 	case "infra.domain_transfer":
 		copyIfPresentNC(cfg, outputs, "domain")
 		copyIfPresentNC(cfg, outputs, "transfer_id")
+	case "infra.dns_delegation":
+		copyIfPresentNC(cfg, outputs, "domain")
+		copyIfPresentNC(cfg, outputs, "nameservers")
 	default:
 		copyIfPresentNC(cfg, outputs, "domain")
 		cfg["records"] = importedDNSRecordsNC(outputs)

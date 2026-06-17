@@ -77,11 +77,11 @@ func TestNcIaCServer_Capabilities(t *testing.T) {
 	}
 
 	caps := capsResp.GetCapabilities()
-	if len(caps) != 2 {
-		t.Fatalf("Capabilities len = %d, want 2", len(caps))
+	if len(caps) != 3 {
+		t.Fatalf("Capabilities len = %d, want 3", len(caps))
 	}
-	if caps[0].GetResourceType() != "infra.dns" || caps[1].GetResourceType() != "infra.domain_transfer" {
-		t.Errorf("Capabilities = %#v, want infra.dns and infra.domain_transfer", caps)
+	if caps[0].GetResourceType() != "infra.dns" || caps[1].GetResourceType() != "infra.domain_transfer" || caps[2].GetResourceType() != "infra.dns_delegation" {
+		t.Errorf("Capabilities = %#v, want infra.dns, infra.domain_transfer, and infra.dns_delegation", caps)
 	}
 	if len(caps[0].GetOperations()) == 0 {
 		t.Error("infra.dns capability has no operations")
@@ -207,8 +207,9 @@ func TestNcIaCServer_Destroy_BeforeInitialize(t *testing.T) {
 
 func TestNcProvider_ImportReadsDNSState(t *testing.T) {
 	p := &ncProvider{
-		dnsDriver:      drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
-		transferDriver: drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+		dnsDriver:        drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		delegationDriver: drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{}),
+		transferDriver:   drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
 	}
 	state, err := p.Import(context.Background(), "example.com", "infra.dns")
 	if err != nil {
@@ -235,10 +236,33 @@ func TestNcProvider_ImportReadsDNSState(t *testing.T) {
 	}
 }
 
+func TestNcProvider_ImportReadsDelegationState(t *testing.T) {
+	p := &ncProvider{
+		dnsDriver:        drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		delegationDriver: drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{}),
+		transferDriver:   drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+	}
+	state, err := p.Import(context.Background(), "example.com", "infra.dns_delegation")
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if state.ProviderID != "example.com" || state.Outputs["domain"] != "example.com" {
+		t.Fatalf("state = %#v", state)
+	}
+	if state.AppliedConfig["provider"] != "namecheap" || state.AppliedConfig["domain"] != "example.com" {
+		t.Fatalf("AppliedConfig = %#v, want provider/domain", state.AppliedConfig)
+	}
+	nameservers, ok := state.AppliedConfig["nameservers"].([]string)
+	if !ok || len(nameservers) != 2 {
+		t.Fatalf("AppliedConfig nameservers = %#v", state.AppliedConfig["nameservers"])
+	}
+}
+
 func TestNcProvider_ImportReadsTransferStatus(t *testing.T) {
 	p := &ncProvider{
-		dnsDriver:      drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
-		transferDriver: drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+		dnsDriver:        drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		delegationDriver: drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{}),
+		transferDriver:   drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
 	}
 	state, err := p.Import(context.Background(), "15", "infra.domain_transfer")
 	if err != nil {
@@ -263,8 +287,9 @@ func TestNcProvider_ImportReadsTransferStatus(t *testing.T) {
 
 func TestNcIaCServer_ImportBuildsAdoptionConfig(t *testing.T) {
 	srv := &ncIaCServer{
-		dnsDriver:      drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
-		transferDriver: drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
+		dnsDriver:        drivers.NewDNSDriverWithClient(&fakeNCImportClient{}),
+		delegationDriver: drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{}),
+		transferDriver:   drivers.NewTransferDriverWithClient(&fakeNCTransferClient{}),
 	}
 	resp, err := srv.Import(context.Background(), &pb.ImportRequest{ProviderId: "example.com", ResourceType: "infra.dns"})
 	if err != nil {
@@ -321,6 +346,28 @@ func (fakeNCImportClient) SetHosts(args *namecheap.DomainsDNSSetHostsArgs) (*nam
 	ok := true
 	return &namecheap.DomainsDNSSetHostsCommandResponse{
 		DomainDNSSetHostsResult: &namecheap.DomainDNSSetHostsResult{Domain: &domain, IsSuccess: &ok},
+	}, nil
+}
+
+type fakeNCDelegationClient struct{}
+
+func (fakeNCDelegationClient) GetList(domain string) (*namecheap.DomainsDNSGetListCommandResponse, error) {
+	nameservers := []string{"dns1.registrar-servers.com", "dns2.registrar-servers.com"}
+	return &namecheap.DomainsDNSGetListCommandResponse{
+		DomainDNSGetListResult: &namecheap.DomainDNSGetListResult{
+			Domain:      &domain,
+			Nameservers: &nameservers,
+		},
+	}, nil
+}
+
+func (fakeNCDelegationClient) SetCustom(domain string, _ []string) (*namecheap.DomainsDNSSetCustomCommandResponse, error) {
+	updated := true
+	return &namecheap.DomainsDNSSetCustomCommandResponse{
+		DomainDNSSetCustomResult: &namecheap.DomainsDNSSetCustomResult{
+			Domain:  &domain,
+			Updated: &updated,
+		},
 	}, nil
 }
 
@@ -537,6 +584,36 @@ func TestNcProvider_EnumerateAll_DNS(t *testing.T) {
 	}
 }
 
+func TestNcProvider_EnumerateAll_DNSDelegation(t *testing.T) {
+	ctx := context.Background()
+	stub := &stubNCDomains{pages: [][]namecheap.Domain{{
+		{Name: ptrString("alpha.test")},
+		{Name: ptrString("beta.test")},
+	}}}
+	p := &ncProvider{
+		domains:          stub,
+		delegationDriver: drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{}),
+	}
+	out, err := p.EnumerateAll(ctx, "infra.dns_delegation")
+	if err != nil {
+		t.Fatalf("EnumerateAll: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("want 2; got %d", len(out))
+	}
+	if out[0].ProviderID != "alpha.test" || out[0].Type != "infra.dns_delegation" {
+		t.Fatalf("first output = %#v", out[0])
+	}
+	nameservers, ok := out[0].Outputs["nameservers"].([]string)
+	if !ok || len(nameservers) != 2 {
+		t.Fatalf("nameservers = %#v, want two Namecheap nameservers", out[0].Outputs["nameservers"])
+	}
+	authority, ok := out[0].Outputs["authority"].(map[string]any)
+	if !ok || authority["registrar"] != "Namecheap" {
+		t.Fatalf("authority = %#v", out[0].Outputs["authority"])
+	}
+}
+
 // TestNcProvider_EnumerateAll_DNS_paginates verifies the page=N+1 advance
 // and the "len < pageSize" terminator: page-1 returns a full page (== 100
 // items), forcing a second GetList call; page-2 returns 1 item which is
@@ -630,6 +707,35 @@ func TestNcIaCServer_EnumerateAll_DNS(t *testing.T) {
 	}
 	if outputs["zone"] != "alpha.test" || outputs["is_our_dns"] != true {
 		t.Errorf("outputs = %#v", outputs)
+	}
+}
+
+func TestNcIaCServer_EnumerateAll_DNSDelegation(t *testing.T) {
+	srv := &ncIaCServer{
+		delegationDriver: drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{}),
+		domains: &stubNCDomains{pages: [][]namecheap.Domain{{
+			{Name: ptrString("alpha.test")},
+			{Name: ptrString("beta.test")},
+		}}},
+	}
+	resp, err := srv.EnumerateAll(context.Background(), &pb.EnumerateAllRequest{ResourceType: "infra.dns_delegation"})
+	if err != nil {
+		t.Fatalf("EnumerateAll: %v", err)
+	}
+	if len(resp.GetOutputs()) != 2 {
+		t.Fatalf("want 2 outputs; got %d", len(resp.GetOutputs()))
+	}
+	first := resp.GetOutputs()[0]
+	if first.GetProviderId() != "alpha.test" || first.GetType() != "infra.dns_delegation" {
+		t.Fatalf("first output = %#v", first)
+	}
+	var outputs map[string]any
+	if err := json.Unmarshal(first.GetOutputsJson(), &outputs); err != nil {
+		t.Fatalf("unmarshal outputs: %v", err)
+	}
+	nameservers, ok := outputs["nameservers"].([]any)
+	if !ok || len(nameservers) != 2 {
+		t.Fatalf("outputs = %#v, want two nameservers", outputs)
 	}
 }
 
