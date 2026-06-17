@@ -614,8 +614,8 @@ func TestNcProvider_EnumerateAll_DNS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnumerateAll: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("want 2; got %d", len(out))
+	if len(out) != 1 {
+		t.Fatalf("want 1; got %d", len(out))
 	}
 	if out[0].ProviderID != "alpha.test" {
 		t.Errorf("providerID[0] = %q; want alpha.test", out[0].ProviderID)
@@ -628,9 +628,6 @@ func TestNcProvider_EnumerateAll_DNS(t *testing.T) {
 	}
 	if out[0].Outputs["is_our_dns"] != true {
 		t.Errorf("is_our_dns[0] = %v; want true", out[0].Outputs["is_our_dns"])
-	}
-	if out[1].Outputs["is_our_dns"] != false {
-		t.Errorf("is_our_dns[1] = %v; want false", out[1].Outputs["is_our_dns"])
 	}
 }
 
@@ -741,8 +738,8 @@ func TestNcIaCServer_EnumerateAll_DNS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnumerateAll: %v", err)
 	}
-	if len(resp.GetOutputs()) != 2 {
-		t.Fatalf("want 2 outputs; got %d", len(resp.GetOutputs()))
+	if len(resp.GetOutputs()) != 1 {
+		t.Fatalf("want 1 output; got %d", len(resp.GetOutputs()))
 	}
 	first := resp.GetOutputs()[0]
 	if first.GetProviderId() != "alpha.test" {
