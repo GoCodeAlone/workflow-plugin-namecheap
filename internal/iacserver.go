@@ -29,6 +29,7 @@ type ncIaCServer struct {
 	// below so the SDK auto-registers IaCProviderEnumerator at plugin startup
 	// for the `infra.dns` enumeration path.
 	pb.UnimplementedIaCProviderEnumeratorServer
+	pb.UnimplementedResourceDriverServer
 
 	// drivers are populated by Initialize.
 	dnsDriver        *drivers.DNSDriver
@@ -54,6 +55,7 @@ var (
 	_ pb.IaCProviderRequiredServer   = (*ncIaCServer)(nil)
 	_ pb.IaCProviderFinalizerServer  = (*ncIaCServer)(nil)
 	_ pb.IaCProviderEnumeratorServer = (*ncIaCServer)(nil)
+	_ pb.ResourceDriverServer        = (*ncIaCServer)(nil)
 )
 
 // NewIaCServer constructs an uninitialised ncIaCServer ready for

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 	"github.com/namecheap/go-namecheap-sdk/v2/namecheap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -111,6 +114,53 @@ func TestNcIaCServer_NameVersion(t *testing.T) {
 	}
 	if verResp.GetVersion() == "" {
 		t.Error("Version is empty; want non-empty")
+	}
+}
+
+func TestNcIaCServer_ResourceDriverServer_RoutesByResourceType(t *testing.T) {
+	srv := NewIaCServer()
+	srv.dnsDriver = drivers.NewDNSDriverWithClient(&fakeNCImportClient{})
+	srv.delegationDriver = drivers.NewDelegationDriverWithClient(&fakeNCDelegationClient{})
+	srv.transferDriver = drivers.NewTransferDriverWithClient(&fakeNCTransferClient{})
+
+	listener := bufconn.Listen(iacTestBufSize)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	server := grpc.NewServer()
+	if err := sdk.RegisterAllIaCProviderServices(server, srv); err != nil {
+		t.Fatalf("RegisterAllIaCProviderServices: %v", err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), iacTestRPCDeadline)
+	t.Cleanup(cancel)
+
+	client := pb.NewResourceDriverClient(conn)
+	if _, err := client.SensitiveKeys(ctx, &pb.SensitiveKeysRequest{ResourceType: "infra.dns_delegation"}); err != nil {
+		t.Fatalf("SensitiveKeys(infra.dns_delegation): %v", err)
+	}
+
+	_, err = client.SensitiveKeys(ctx, &pb.SensitiveKeysRequest{ResourceType: "infra.unknown_for_test"})
+	if err == nil {
+		t.Fatal("SensitiveKeys(infra.unknown_for_test): expected error, got nil")
+	}
+	if got := status.Code(err); got == codes.Unimplemented {
+		t.Fatalf("SensitiveKeys unknown returned Unimplemented; ResourceDriver service was not registered: %v", err)
+	}
+	if !strings.Contains(err.Error(), "infra.unknown_for_test") {
+		t.Fatalf("SensitiveKeys unknown error = %q, want unknown type in message", err.Error())
 	}
 }
 
