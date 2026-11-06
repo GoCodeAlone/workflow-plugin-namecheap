@@ -130,8 +130,8 @@
       "name": "NAMECHEAP_CLIENT_IP",
       "key": "client_ip",
       "sensitive": false,
-      "description": "Non-secret public IP sent as Namecheap ClientIp on every API request; it must already be allowlisted in the Namecheap control panel.",
-      "prompt": "Public IP already allowlisted in Namecheap (CIDR not supported)"
+      "description": "Non-secret public IPv4 of the runner, sent as Namecheap ClientIp on every API request; it must already be allowlisted in the Namecheap control panel. Configuring this value does not update the allowlist.",
+      "prompt": "Runner's public IPv4 already allowlisted in Namecheap (CIDR not supported)"
     }
   ],
   "config_targets": [

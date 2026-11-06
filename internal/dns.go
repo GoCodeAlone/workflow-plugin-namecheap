@@ -30,10 +30,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("%w: api_key is empty", ErrAuthMissing)
 	}
 	if strings.TrimSpace(c.ClientIP) == "" {
-		return fmt.Errorf("%w: client_ip is empty (required for Namecheap API allowlist)", ErrAuthMissing)
+		return fmt.Errorf("%w: client_ip is empty (required for the Namecheap ClientIp request parameter; provide the runner's public IPv4 already allowlisted in Namecheap)", ErrAuthMissing)
 	}
 	if net.ParseIP(c.ClientIP) == nil {
-		return fmt.Errorf("namecheap: client_ip %q is not a valid IP address (CIDR is unsupported by Namecheap)", c.ClientIP)
+		return fmt.Errorf("namecheap: client_ip %q is not a valid IP address for Namecheap ClientIp (CIDR is unsupported)", c.ClientIP)
 	}
 	return nil
 }

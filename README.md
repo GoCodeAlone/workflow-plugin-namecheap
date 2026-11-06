@@ -30,7 +30,7 @@ modules:
     config:
       api_user:  ${NAMECHEAP_API_USER}
       api_key:   ${NAMECHEAP_API_KEY}
-      client_ip: ${NAMECHEAP_CLIENT_IP}
+      client_ip: ${NAMECHEAP_CLIENT_IP} # Runner's public IPv4, already allowlisted in Namecheap
       # sandbox: true    # optional — point at api.sandbox.namecheap.com
 
 resources:
@@ -84,13 +84,18 @@ existing transfer's status.
 | Name | Sensitive | Source |
 |------|-----------|--------|
 | `NAMECHEAP_API_USER` | no | Namecheap account username (= ApiUser in the API) |
-| `NAMECHEAP_CLIENT_IP` | no | Public IP sent as Namecheap `ClientIp`; must already be allowlisted in the same control panel |
+| `NAMECHEAP_CLIENT_IP` | no | Runner's public IPv4 sent as Namecheap `ClientIp`; must already be allowlisted in the same control panel |
 
 `NAMECHEAP_CLIENT_IP` is intentionally non-sensitive, but it is still required.
-Namecheap requires every API request to include the caller's public `ClientIp`
-and rejects requests unless that IP also appears in the account API allowlist.
-Entering the IP in the Namecheap UI does not remove the need to pass the same
-value in Workflow provider config.
+Namecheap's [global API parameters](https://www.namecheap.com/support/api/global-parameters/)
+require the calling server's IPv4 as `ClientIp` on every request. First add the
+runner's public IPv4 to the account API allowlist in Profile → Tools → Business
+& Dev Tools → Namecheap API Access → Whitelisted IPs, following Namecheap's
+[API access setup](https://www.namecheap.com/support/api/intro/). Then supply that
+same address as `NAMECHEAP_CLIENT_IP` in Workflow provider config. Neither
+`wfctl` nor this plugin updates the Namecheap allowlist. The local validator
+checks IP syntax; API authorization still depends on Namecheap's IPv4 and
+allowlist requirements.
 
 ```sh
 wfctl secrets setup --plugin workflow-plugin-namecheap
@@ -136,7 +141,7 @@ modules:
     config:
       api_user:  ${NAMECHEAP_API_USER}
       api_key:   ${NAMECHEAP_API_KEY}
-      client_ip: ${NAMECHEAP_CLIENT_IP}
+      client_ip: ${NAMECHEAP_CLIENT_IP} # Runner's public IPv4, already allowlisted in Namecheap
 
 resources:
   - name: site-a

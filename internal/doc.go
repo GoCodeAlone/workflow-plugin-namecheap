@@ -9,8 +9,9 @@
 // Namecheap API requests require three provider configuration values:
 // `api_user`, `api_key`, and `client_ip`. The `client_ip` value is not secret
 // credential material, but it is required by Namecheap on every API request and
-// must match an IP address already allowlisted in the Namecheap control panel.
-// CIDR ranges are not accepted by the Namecheap API.
+// must identify the runner's public IPv4 already allowlisted in the Namecheap
+// control panel. Setting this value does not update that allowlist. CIDR ranges
+// are not accepted by the Namecheap API.
 //
 // The production integration uses github.com/namecheap/go-namecheap-sdk/v2.
 // Tests should prefer the narrow fakeable driver interfaces in the drivers
