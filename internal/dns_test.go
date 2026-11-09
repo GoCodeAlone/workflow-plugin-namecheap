@@ -43,6 +43,56 @@ func TestConfig_Validate_RejectsCIDR(t *testing.T) {
 	}
 }
 
+func TestConfig_Validate_ClientIPGuidance(t *testing.T) {
+	cases := []struct {
+		name        string
+		ip          string
+		wantMissing bool
+	}{
+		{"empty", "", true},
+		{"whitespace", " \t\n", true},
+		{"malformed", "not-an-ip", false},
+		{"hostname", "runner.example", false},
+		{"IPv4 CIDR", "203.0.113.10/24", false},
+		{"IPv6 CIDR", "2001:db8::/32", false},
+		{"address with port", "203.0.113.10:443", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (Config{APIUser: "u", APIKey: "k", ClientIP: tc.ip}).Validate()
+			if err == nil {
+				t.Fatal("expected client_ip validation error")
+			}
+			if errors.Is(err, ErrAuthMissing) != tc.wantMissing {
+				t.Errorf("ErrAuthMissing = %v, want %v", errors.Is(err, ErrAuthMissing), tc.wantMissing)
+			}
+			parts := []string{"client_ip", "ClientIp"}
+			if tc.wantMissing {
+				parts = append(parts, "request parameter", "already allowlisted")
+			} else {
+				parts = append(parts, "not a valid IP address", "CIDR")
+			}
+			for _, part := range parts {
+				if !strings.Contains(err.Error(), part) {
+					t.Errorf("error %q must include %q", err, part)
+				}
+			}
+		})
+	}
+}
+
+func TestConfig_Validate_PreservesAcceptedIPFormats(t *testing.T) {
+	// Keep the existing syntax-only validation contract. Namecheap's documented
+	// IPv4 requirement is an external API constraint, not a new local restriction.
+	for _, ip := range []string{"203.0.113.10", "2001:db8::10"} {
+		t.Run(ip, func(t *testing.T) {
+			if err := (Config{APIUser: "u", APIKey: "k", ClientIP: ip}).Validate(); err != nil {
+				t.Fatalf("previously accepted IP syntax rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestNewDriver_PropagatesValidationErr(t *testing.T) {
 	_, err := NewDriver(Config{APIUser: "u"})
 	if err == nil {

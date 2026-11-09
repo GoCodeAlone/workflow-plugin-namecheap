@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -21,8 +22,50 @@ func TestManifestDeclaresIaCProviderCapability(t *testing.T) {
 	assertIaCProviderCapability(t, manifest, "namecheap", []string{"infra.dns", "infra.domain_transfer", "infra.dns_delegation"})
 }
 
+func TestManifestClientIPSetupContract(t *testing.T) {
+	manifest := readPluginManifest(t, "plugin.json")
+	for _, secret := range manifest.RequiredSecrets {
+		if secret.Name == "NAMECHEAP_CLIENT_IP" {
+			t.Fatal("NAMECHEAP_CLIENT_IP must remain non-secret configuration")
+		}
+	}
+	count := 0
+	for _, config := range manifest.RequiredConfig {
+		if config.Name != "NAMECHEAP_CLIENT_IP" {
+			continue
+		}
+		count++
+		if config.Key != "client_ip" || config.Sensitive {
+			t.Errorf("client IP config must preserve the non-secret client_ip key: %#v", config)
+		}
+		for _, part := range []string{"ClientIp", "every API request", "already", "does not update the allowlist"} {
+			if !strings.Contains(config.Description, part) {
+				t.Errorf("client IP description must explain %q: %q", part, config.Description)
+			}
+		}
+		for _, part := range []string{"Runner", "IPv4", "already allowlisted"} {
+			if !strings.Contains(config.Prompt, part) {
+				t.Errorf("client IP prompt must identify %q: %q", part, config.Prompt)
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("got %d NAMECHEAP_CLIENT_IP config entries, want one", count)
+	}
+}
+
+type setupValue struct {
+	Name        string `json:"name"`
+	Key         string `json:"key"`
+	Sensitive   bool   `json:"sensitive"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+}
+
 type pluginManifest struct {
-	Capabilities struct {
+	RequiredConfig  []setupValue `json:"required_config"`
+	RequiredSecrets []setupValue `json:"required_secrets"`
+	Capabilities    struct {
 		ResourceTypes []string `json:"resourceTypes"`
 		IaCProvider   struct {
 			Name          string   `json:"name"`
